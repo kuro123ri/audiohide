@@ -104,11 +104,16 @@ input[type=range]::-moz-range-thumb { width: 22px; height: 22px; border-radius: 
 input[type=range]::-ms-track { height: 4px; background: #bbb; border: none; color: transparent; }
 input[type=range]::-ms-thumb { width: 22px; height: 22px; border-radius: 50%; background: #333; border: none; cursor: pointer; }
 
-/* ── Select — custom arrow, no iOS default styling ── */
+/* ── Select — custom arrow, no iOS/Android default styling ── */
 select {
   border: 1px solid #999; padding: 6px 28px 6px 8px; height: 38px;
   font-family: Verdana, Arial, sans-serif; font-size: 12px;
-  background: #fff url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath fill='%23333' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E") no-repeat right 8px center;
+  /* Split background shorthand so background-size works on old Android */
+  background-color: #fff;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath fill='%23333' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 10px 6px;  /* CRITICAL: without this, SVG tiles like wallpaper on Android */
   -webkit-appearance: none; appearance: none; border-radius: 0;
   max-width: 100%; cursor: pointer;
 }
@@ -264,43 +269,172 @@ audio { width: 100%; margin-bottom: 8px; }
 }
 
 /* ─────────────────────────────────────
-   DARK MODE (follows OS setting)
+   THEME SYSTEM
+   Three modes: system (auto), dark, light.
+   JS sets data-theme="dark" or data-theme="light" on <html>.
+   "System" removes the attribute so the OS media query takes over.
+
+   HOW IT WORKS:
+   - html:not([data-theme])  → no manual pick → follow OS
+   - [data-theme="dark"]     → always dark, ignores OS
+   - [data-theme="light"]    → always light, ignores OS
    ───────────────────────────────────── */
+
+/* Shared dark values in a class we reference twice below */
+
+/* ── AUTO dark: only fires when OS is dark AND user hasn't picked ── */
 @media (prefers-color-scheme: dark) {
-  body { background: #1a1a1a; color: #e0e0e0; }
-  h2   { border-color: #555; }
-  hr   { border-color: #444; }
-  .section         { background: #252525; border-color: #444; }
-  .settings-panel  { background: #222;    border-color: #555; }
-  .howto           { background: #252000; border-color: #665500; color: #ddd; }
-  .badge           { background: #2a2500; border-color: #665500; }
-  .badge.green     { background: #002200; border-color: #3a7a3a; }
-  .badge.red       { background: #220000; border-color: #7a3a3a; }
-  .status.ok       { background: #002200; border-color: #3a7; color: #88dd88; }
-  .status.err      { background: #220000; border-color: #a55; color: #dd8888; }
-  .status.info     { background: #001133; border-color: #336; color: #88aaff; }
-  .status.warn     { background: #221a00; border-color: #664; color: #ddcc88; }
-  .dz              { background: #1e1e1e; border-color: #555; color: #bbb; }
-  .dz:hover, .dz.over { background: #2a2a2a; border-color: #aaa; }
-  .dz:active       { background: #333; }
-  select, input[type=number], input[type=text] { background: #2a2a2a; color: #e0e0e0; border-color: #555; }
-  select { background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath fill='%23aaa' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E"); }
-  .btn         { background: #333; border-color: #666; color: #e0e0e0; }
-  .btn-primary { background: #002244; border-color: #336; color: #aaddff; }
-  .btn-action  { background: #002200; border-color: #363; color: #aaddaa; }
-  .btn-sm, .btn-settings, .lock-btn { background: #333; border-color: #666; color: #ddd; }
-  .info-card   { background: #222; border-color: #444; }
-  .info-note   { border-color: #444; color: #bbb; }
-  .i-lbl       { color: #888; }
-  .cap-track, .prog-track { background: #333; border-color: #555; }
-  .preview     { border-color: #444; }
-  .subtitle, .setting-desc, .cap-lbl, .cap-val, .dz-hint, .range-val { color: #888; }
-  .setting-row label { color: #ccc; }
-  .ios-note    { background: #252000; border-color: #665500; color: #ddd; }
-  .compat-warn { background: #2a1a00; border-color: #884400; color: #ddd; }
-  a           { color: #6688ff; }
-  a:visited   { color: #aa88ff; }
+  html:not([data-theme]) body { background: #1a1a1a; color: #e0e0e0; }
+  html:not([data-theme]) h2   { border-color: #555; }
+  html:not([data-theme]) hr   { border-color: #444; }
+  html:not([data-theme]) .section        { background: #252525; border-color: #444; }
+  html:not([data-theme]) .settings-panel { background: #222;    border-color: #555; }
+  html:not([data-theme]) .howto          { background: #252000; border-color: #665500; color: #ddd; }
+  html:not([data-theme]) .badge          { background: #2a2500; border-color: #665500; }
+  html:not([data-theme]) .badge.green    { background: #002200; border-color: #3a7a3a; }
+  html:not([data-theme]) .badge.red      { background: #220000; border-color: #7a3a3a; }
+  html:not([data-theme]) .status.ok      { background: #002200; border-color: #3a7; color: #88dd88; }
+  html:not([data-theme]) .status.err     { background: #220000; border-color: #a55; color: #dd8888; }
+  html:not([data-theme]) .status.info    { background: #001133; border-color: #336; color: #88aaff; }
+  html:not([data-theme]) .status.warn    { background: #221a00; border-color: #664; color: #ddcc88; }
+  html:not([data-theme]) .dz             { background: #1e1e1e; border-color: #555; color: #bbb; }
+  html:not([data-theme]) .dz:hover,
+  html:not([data-theme]) .dz.over        { background: #2a2a2a; border-color: #aaa; }
+  html:not([data-theme]) .dz:active      { background: #333; }
+  html:not([data-theme]) select,
+  html:not([data-theme]) input[type=number],
+  html:not([data-theme]) input[type=text] { background-color: #2a2a2a; color: #e0e0e0; border-color: #555; }
+  html:not([data-theme]) select {
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath fill='%23aaa' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+  }
+  html:not([data-theme]) .btn         { background: #333; border-color: #666; color: #e0e0e0; }
+  html:not([data-theme]) .btn-primary { background: #002244; border-color: #336; color: #aaddff; }
+  html:not([data-theme]) .btn-action  { background: #002200; border-color: #363; color: #aaddaa; }
+  html:not([data-theme]) .btn-sm,
+  html:not([data-theme]) .btn-settings,
+  html:not([data-theme]) .lock-btn    { background: #333; border-color: #666; color: #ddd; }
+  html:not([data-theme]) .info-card   { background: #222; border-color: #444; }
+  html:not([data-theme]) .info-note   { border-color: #444; color: #bbb; }
+  html:not([data-theme]) .i-lbl       { color: #888; }
+  html:not([data-theme]) .cap-track,
+  html:not([data-theme]) .prog-track  { background: #333; border-color: #555; }
+  html:not([data-theme]) .preview     { border-color: #444; }
+  html:not([data-theme]) .subtitle,
+  html:not([data-theme]) .setting-desc,
+  html:not([data-theme]) .cap-lbl,
+  html:not([data-theme]) .cap-val,
+  html:not([data-theme]) .dz-hint,
+  html:not([data-theme]) .range-val   { color: #888; }
+  html:not([data-theme]) .setting-row label { color: #ccc; }
+  html:not([data-theme]) .ios-note    { background: #252000; border-color: #665500; color: #ddd; }
+  html:not([data-theme]) .compat-warn { background: #2a1a00; border-color: #884400; color: #ddd; }
+  html:not([data-theme]) a            { color: #6688ff; }
+  html:not([data-theme]) a:visited    { color: #aa88ff; }
+  html:not([data-theme]) .btn-cancel  { background: #220000; border-color: #a55; color: #dd8888; }
+  html:not([data-theme]) .toggle-track { background: #444; }
+  html:not([data-theme]) .toggle-label { color: #ccc; }
 }
+
+/* ── FORCED dark (user clicked Dark) — same colours, no media query needed ── */
+[data-theme="dark"] body { background: #1a1a1a; color: #e0e0e0; }
+[data-theme="dark"] h2   { border-color: #555; }
+[data-theme="dark"] hr   { border-color: #444; }
+[data-theme="dark"] .section        { background: #252525; border-color: #444; }
+[data-theme="dark"] .settings-panel { background: #222;    border-color: #555; }
+[data-theme="dark"] .howto          { background: #252000; border-color: #665500; color: #ddd; }
+[data-theme="dark"] .badge          { background: #2a2500; border-color: #665500; }
+[data-theme="dark"] .badge.green    { background: #002200; border-color: #3a7a3a; }
+[data-theme="dark"] .badge.red      { background: #220000; border-color: #7a3a3a; }
+[data-theme="dark"] .status.ok      { background: #002200; border-color: #3a7; color: #88dd88; }
+[data-theme="dark"] .status.err     { background: #220000; border-color: #a55; color: #dd8888; }
+[data-theme="dark"] .status.info    { background: #001133; border-color: #336; color: #88aaff; }
+[data-theme="dark"] .status.warn    { background: #221a00; border-color: #664; color: #ddcc88; }
+[data-theme="dark"] .dz             { background: #1e1e1e; border-color: #555; color: #bbb; }
+[data-theme="dark"] .dz:hover,
+[data-theme="dark"] .dz.over        { background: #2a2a2a; border-color: #aaa; }
+[data-theme="dark"] .dz:active      { background: #333; }
+[data-theme="dark"] select,
+[data-theme="dark"] input[type=number],
+[data-theme="dark"] input[type=text] { background-color: #2a2a2a; color: #e0e0e0; border-color: #555; }
+[data-theme="dark"] select {
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath fill='%23aaa' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+}
+[data-theme="dark"] .btn         { background: #333; border-color: #666; color: #e0e0e0; }
+[data-theme="dark"] .btn-primary { background: #002244; border-color: #336; color: #aaddff; }
+[data-theme="dark"] .btn-action  { background: #002200; border-color: #363; color: #aaddaa; }
+[data-theme="dark"] .btn-sm,
+[data-theme="dark"] .btn-settings,
+[data-theme="dark"] .lock-btn    { background: #333; border-color: #666; color: #ddd; }
+[data-theme="dark"] .info-card   { background: #222; border-color: #444; }
+[data-theme="dark"] .info-note   { border-color: #444; color: #bbb; }
+[data-theme="dark"] .i-lbl       { color: #888; }
+[data-theme="dark"] .cap-track,
+[data-theme="dark"] .prog-track  { background: #333; border-color: #555; }
+[data-theme="dark"] .preview     { border-color: #444; }
+[data-theme="dark"] .subtitle,
+[data-theme="dark"] .setting-desc,
+[data-theme="dark"] .cap-lbl,
+[data-theme="dark"] .cap-val,
+[data-theme="dark"] .dz-hint,
+[data-theme="dark"] .range-val   { color: #888; }
+[data-theme="dark"] .setting-row label { color: #ccc; }
+[data-theme="dark"] .ios-note    { background: #252000; border-color: #665500; color: #ddd; }
+[data-theme="dark"] .compat-warn { background: #2a1a00; border-color: #884400; color: #ddd; }
+[data-theme="dark"] a            { color: #6688ff; }
+[data-theme="dark"] a:visited    { color: #aa88ff; }
+[data-theme="dark"] .btn-cancel  { background: #220000; border-color: #a55; color: #dd8888; }
+[data-theme="dark"] .toggle-track { background: #444; }
+[data-theme="dark"] .toggle-label { color: #ccc; }
+
+/* ── FORCED light (user clicked Light) — explicit light values override everything ── */
+[data-theme="light"] body { background: #ffffff; color: #000000; }
+[data-theme="light"] h2   { border-color: #999; }
+[data-theme="light"] hr   { border-color: #aaa; }
+[data-theme="light"] .section        { background: #fafafa; border-color: #ccc; }
+[data-theme="light"] .settings-panel { background: #f8f8f8; border-color: #999; }
+[data-theme="light"] .howto          { background: #fffff0; border-color: #cc9;  color: inherit; }
+[data-theme="light"] .badge          { background: #fffbe6; border-color: #aaa; }
+[data-theme="light"] .badge.green    { background: #efffef; border-color: #5a5; }
+[data-theme="light"] .badge.red      { background: #fff0f0; border-color: #a55; }
+[data-theme="light"] .status.ok      { background: #efffef; border-color: #5a5; color: #004400; }
+[data-theme="light"] .status.err     { background: #fff0f0; border-color: #a55; color: #550000; }
+[data-theme="light"] .status.info    { background: #f0f4ff; border-color: #55a; color: #000044; }
+[data-theme="light"] .status.warn    { background: #fffbe6; border-color: #aa8; color: #443300; }
+[data-theme="light"] .dz             { background: #fff;    border-color: #999; color: #333; }
+[data-theme="light"] .dz:hover,
+[data-theme="light"] .dz.over        { background: #f0f0f0; border-color: #000; }
+[data-theme="light"] select,
+[data-theme="light"] input[type=number],
+[data-theme="light"] input[type=text] { background-color: #fff; color: #000; border-color: #999; }
+[data-theme="light"] select {
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath fill='%23333' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+}
+[data-theme="light"] .btn         { background: #e0e0e0; border-color: #333; color: #000; }
+[data-theme="light"] .btn-primary { background: #ddeeff; border-color: #336; color: #000; }
+[data-theme="light"] .btn-action  { background: #ddf0dd; border-color: #363; color: #000; }
+[data-theme="light"] .btn-sm,
+[data-theme="light"] .btn-settings,
+[data-theme="light"] .lock-btn    { background: #e8e8e8; border-color: #666; color: #000; }
+[data-theme="light"] .info-card   { background: #f8f8f8; border-color: #bbb; }
+[data-theme="light"] .info-note   { border-color: #ccc;  color: #333; }
+[data-theme="light"] .i-lbl       { color: #555; }
+[data-theme="light"] .cap-track,
+[data-theme="light"] .prog-track  { background: #ddd; border-color: #bbb; }
+[data-theme="light"] .preview     { border-color: #ccc; }
+[data-theme="light"] .subtitle,
+[data-theme="light"] .setting-desc,
+[data-theme="light"] .cap-lbl,
+[data-theme="light"] .cap-val,
+[data-theme="light"] .dz-hint,
+[data-theme="light"] .range-val   { color: #555; }
+[data-theme="light"] .setting-row label { color: #000; }
+[data-theme="light"] .ios-note    { background: #fffbe6; border-color: #aa8; color: #333; }
+[data-theme="light"] .compat-warn { background: #fff0e0; border-color: #c84; color: #333; }
+[data-theme="light"] a            { color: #0000cc; }
+[data-theme="light"] a:visited    { color: #551a8b; }
+[data-theme="light"] .btn-cancel  { background: #fff0f0; border-color: #a55; color: #550000; }
+[data-theme="light"] .toggle-track { background: #ccc; }
+[data-theme="light"] .toggle-label { color: #000; }
 
 /* ── Cancel button ── */
 .btn-cancel {
@@ -321,12 +455,77 @@ audio { width: 100%; margin-bottom: 8px; }
 }
 .btn-cancel:hover, .btn-cancel:active { background: #ffd8d8; }
 
-/* dark mode cancel */
-@media (prefers-color-scheme: dark) {
-  .btn-cancel { background: #220000; border-color: #a55; color: #dd8888; }
-  .btn-cancel:hover, .btn-cancel:active { background: #330000; }
+/* ── Toggle switch (Stereo/Mono and similar settings) ──────────
+   Uses a hidden checkbox + visible label track.
+   Works on iOS, Android, and desktop — no JS needed for the visual.
+   ─────────────────────────────────────────────────────────────── */
+.toggle-wrap {
+  display: -webkit-box; display: -webkit-flex; display: flex;
+  -webkit-align-items: center; align-items: center;
+  margin-bottom: 4px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  -webkit-user-select: none; user-select: none;
 }
-[data-theme="dark"] .btn-cancel { background: #220000; border-color: #a55; color: #dd8888; }
-[data-theme="dark"] .btn-cancel:hover, [data-theme="dark"] .btn-cancel:active { background: #330000; }
-[data-theme="light"] .btn-cancel { background: #fff0f0; border-color: #a55; color: #550000; }
-[data-theme="light"] .btn-cancel:hover, [data-theme="light"] .btn-cancel:active { background: #ffd8d8; }
+
+/* Hide the real checkbox — it still receives keyboard/screen-reader focus */
+.toggle-wrap input[type=checkbox] {
+  position: absolute;
+  opacity: 0;
+  width: 0; height: 0;
+  pointer-events: none;
+}
+
+/* The pill track */
+.toggle-track {
+  position: relative;
+  width: 44px; height: 24px;
+  background: #ccc;
+  border-radius: 12px;
+  -webkit-transition: background 0.2s; transition: background 0.2s;
+  -webkit-flex-shrink: 0; flex-shrink: 0;
+  margin-right: 10px;
+  border: 1px solid transparent;
+}
+
+/* The sliding knob */
+.toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,.35);
+  -webkit-transition: -webkit-transform 0.2s; transition: transform 0.2s;
+}
+
+/* Checked state — slide knob right and turn track green */
+.toggle-wrap input[type=checkbox]:checked + .toggle-track {
+  background: #1a7a1a;
+}
+.toggle-wrap input[type=checkbox]:checked + .toggle-track::after {
+  -webkit-transform: translateX(20px); transform: translateX(20px);
+}
+
+/* Focus ring for keyboard users */
+.toggle-wrap input[type=checkbox]:focus + .toggle-track {
+  outline: 2px solid #0066cc;
+  outline-offset: 2px;
+}
+
+/* Label text next to the toggle */
+.toggle-label {
+  font-size: 13px;
+  font-weight: bold;
+  color: #000;
+  line-height: 1.4;
+}
+.toggle-label small {
+  display: block;
+  font-size: 11px;
+  font-weight: normal;
+  color: #555;
+  margin-top: 1px;
+}

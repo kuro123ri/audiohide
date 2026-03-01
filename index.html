@@ -82,12 +82,17 @@
     <div class="setting-desc">Boosts quiet audio to full volume before encoding.</div>
   </div>
   <div class="setting-row">
-    <label>
+    <!-- Toggle switch for Stereo / Mono — works on iOS, Android, desktop -->
+    <label class="toggle-wrap" for="stereoAudio">
       <input type="checkbox" id="stereoAudio" onchange="analyseCapacity()"/>
-      Preserve stereo (doubles required capacity)
+      <span class="toggle-track"></span>
+      <span class="toggle-label">
+        Preserve stereo
+        <small>OFF = Mono (recommended) &nbsp;|&nbsp; ON = Stereo (doubles capacity needed)</small>
+      </span>
     </label>
     <div class="setting-desc">
-      When enabled, left and right channels are encoded separately for full stereo audio.
+      When ON, left and right channels are encoded separately for full stereo audio.
       This doubles the WAV size — you will need a larger image or slower speed to fit.
       Mono is the default and works well for most music.
     </div>
