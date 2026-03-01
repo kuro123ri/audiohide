@@ -33,7 +33,7 @@ Anyone with the tool can extract the audio back out — or no one can, if you us
 
 try decode on this lemon
 
-![lemons](https://github.com/kuro123ri/blob/audiohide/edit/main/lemon.PNG?raw=true)
+![lemons](https://github.com/kuro123ri/audiohide/blob/main/lemon.png)
 
 ## Features
 
