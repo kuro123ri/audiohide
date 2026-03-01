@@ -303,7 +303,7 @@ audio { width: 100%; margin-bottom: 8px; }
 [data-theme="light"] .dz:hover, [data-theme="light"] .dz.over { background: #f0f0f0; border-color: #000; }
 [data-theme="light"] .dz:active { background: #e8e8e8; }
 [data-theme="light"] select, [data-theme="light"] input[type=number], [data-theme="light"] input[type=text] { background: #fff; color: #000; border-color: #999; }
-[data-theme="light"] select { background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath fill='%23333' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E"); }
+[data-theme="light"] select { background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath fill='%23333' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
 [data-theme="light"] .btn { background: #e0e0e0; border-color: #333; color: #000; }
 [data-theme="light"] .btn:hover:not(:disabled), [data-theme="light"] .btn:active:not(:disabled) { background: #ccc; }
 [data-theme="light"] .btn-primary { background: #ddeeff; border-color: #336; color: #000; }
@@ -353,7 +353,7 @@ audio { width: 100%; margin-bottom: 8px; }
 [data-theme="dark"] select { background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath fill='%23aaa' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
 [data-theme="dark"] .btn { background: #333; border-color: #666; color: #e0e0e0; }
 [data-theme="dark"] .btn-primary { background: #002244; border-color: #336; color: #aaddff; }
-[data-theme="dark"] .btn-action { background: #002200; border-color: #363; color: #aaddaa; }
+[data-theme="dark"] .btn-action { background: #002200; border-color: #363; color: #66bb66; }
 [data-theme="dark"] .btn-sm, [data-theme="dark"] .btn-settings, [data-theme="dark"] .btn-theme, [data-theme="dark"] .lock-btn { background: #333; border-color: #666; color: #ddd; }
 [data-theme="dark"] .info-card { background: #222; border-color: #444; }
 [data-theme="dark"] .info-note { border-color: #444; color: #bbb; }
