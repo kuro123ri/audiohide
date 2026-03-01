@@ -27,7 +27,10 @@
     <h1>AudioHide</h1>
     <div class="subtitle">Hide a song inside an image file &mdash; runs entirely in your browser, no upload.</div>
   </div>
-  <button class="btn-settings" onclick="toggleSettings()">[ Settings ]</button>
+  <div style="display: -webkit-box; display: -webkit-flex; display: flex; gap: 4px; -webkit-flex-direction: column; flex-direction: column;">
+    <button class="btn-theme" id="themeBtn" onclick="cycleTheme()" title="Toggle theme (Light/Dark/System)">Light</button>
+    <button class="btn-settings" onclick="toggleSettings()">[ Settings ]</button>
+  </div>
 </div>
 
 <hr>

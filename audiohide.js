@@ -223,6 +223,55 @@ function onPasskeyToggle() {
   $('decPasskeyRow').style.display = on ? 'block' : 'none';
 }
 
+// ── Theme management ──────────────────────────────────────────
+function getCurrentTheme() {
+  var saved = localStorage.getItem('theme-preference');
+  if (saved) return saved; // 'light', 'dark', or 'system'
+  return 'system'; // default
+}
+
+function applyTheme(theme) {
+  if (theme === 'system') {
+    // Remove the data attribute to use system preference
+    document.documentElement.removeAttribute('data-theme');
+  } else {
+    // Set explicit light or dark
+    document.documentElement.setAttribute('data-theme', theme);
+  }
+  localStorage.setItem('theme-preference', theme);
+  updateThemeButton();
+}
+
+function updateThemeButton() {
+  var theme = getCurrentTheme();
+  var btn = $('themeBtn');
+  if (!btn) return;
+
+  if (theme === 'light') {
+    btn.textContent = 'Light';
+    btn.title = 'Current: Light Mode - Click for Dark Mode';
+  } else if (theme === 'dark') {
+    btn.textContent = 'Dark';
+    btn.title = 'Current: Dark Mode - Click for System Mode';
+  } else {
+    btn.textContent = 'System';
+    btn.title = 'Current: System Mode - Click for Light Mode';
+  }
+}
+
+function cycleTheme() {
+  var theme = getCurrentTheme();
+  var next;
+  if (theme === 'light') {
+    next = 'dark';
+  } else if (theme === 'dark') {
+    next = 'system';
+  } else {
+    next = 'light';
+  }
+  applyTheme(next);
+}
+
 // ── Tabs ──────────────────────────────────────────────────────
 function switchTab(t) {
   ['enc', 'dec'].forEach(function (x) {
@@ -971,4 +1020,7 @@ setupDrop('decDrop', 'decInput', function (f) {
     var hints = document.querySelectorAll('.dz-hint');
     for (var i = 0; i < hints.length; i++) hints[i].textContent = 'Tap to select a file';
   }
+  // Initialize theme
+  var savedTheme = getCurrentTheme();
+  applyTheme(savedTheme);
 })();
