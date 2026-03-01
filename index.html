@@ -2,23 +2,37 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<!-- viewport: no user-scale to prevent iOS double-tap zoom, but still allows pinch-zoom -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<!-- iOS web app / PWA basics -->
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+<meta name="apple-mobile-web-app-title" content="AudioHide"/>
+<!-- Android theme colour -->
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)"/>
+<meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)"/>
+<!-- Prevent IE from using compatibility mode -->
+<meta http-equiv="X-UA-Compatible" content="IE=edge"/>
 <title>AudioHide - LSB Steganography Tool</title>
 <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
 
+<!-- Compat warning (shown by JS if Web Audio missing) -->
+<div class="compat-warn" id="compatWarn"></div>
+
+<!-- ── TOP BAR ──────────────────────────────────────────────── -->
 <div class="topbar">
   <div>
     <h1>AudioHide</h1>
-    <div class="subtitle">LSB audio steganography &mdash; hide a song inside an image file. Runs entirely in your browser, no upload.</div>
+    <div class="subtitle">Hide a song inside an image file &mdash; runs entirely in your browser, no upload.</div>
   </div>
   <button class="btn-settings" onclick="toggleSettings()">[ Settings ]</button>
 </div>
 
 <hr>
 
-<!-- ── SETTINGS PANEL ─────────────────────────────────────── -->
+<!-- ── SETTINGS PANEL ───────────────────────────────────────── -->
 <div class="settings-panel" id="settingsPanel">
   <h2>Settings</h2>
 
@@ -33,17 +47,17 @@
   <div class="setting-row" id="compressQualityRow" style="display:none; margin-left:16px;">
     <label>JPEG quality: <span class="range-val"><b id="compressQualityVal">75</b> / 100</span></label>
     <input type="range" id="compressQuality" min="1" max="100" value="75"
-      oninput="$('compressQualityVal').textContent=this.value"/>
-    <div class="setting-desc">1 = most compressed (blocky), 100 = no compression. Recommended: 60-85.</div>
+      oninput="document.getElementById('compressQualityVal').textContent=this.value"/>
+    <div class="setting-desc">Recommended: 60&ndash;85. Lower = smaller but blockier.</div>
   </div>
 
   <div class="setting-row" style="margin-top:8px;">
     <label>LSB depth:</label>
     <select id="lsbDepth" onchange="analyseCapacity()">
-      <option value="1" selected>1-bit &mdash; standard, invisible quality change</option>
-      <option value="2">2-bit &mdash; double capacity, slight quality change</option>
+      <option value="1" selected>1-bit &mdash; standard (invisible)</option>
+      <option value="2">2-bit &mdash; double capacity (slight change)</option>
     </select>
-    <div class="setting-desc">2-bit mode stores 2 bits in each colour channel instead of 1, doubling how much audio you can hide. Very hard to see but slightly more detectable by analysis tools.</div>
+    <div class="setting-desc">2-bit mode doubles capacity by storing 2 bits per colour channel. Very hard to see but slightly more detectable by analysis tools. Both sides must use the same setting.</div>
   </div>
 
   <hr>
@@ -51,7 +65,7 @@
   <div class="setting-row">
     <label>Sample rate:</label>
     <select id="sampleRate" onchange="onSettingChange()">
-      <option value="8000">8000 Hz &mdash; phone quality, smallest file</option>
+      <option value="8000">8000 Hz &mdash; phone quality, smallest</option>
       <option value="11025">11025 Hz &mdash; AM radio quality</option>
       <option value="16000">16000 Hz &mdash; voice quality</option>
       <option value="22050" selected>22050 Hz &mdash; FM quality (default)</option>
@@ -63,7 +77,7 @@
       <input type="checkbox" id="normalizeAudio"/>
       Normalize audio before encoding
     </label>
-    <div class="setting-desc">Boosts audio to maximum volume before encoding. Good for quiet source files.</div>
+    <div class="setting-desc">Boosts quiet audio to full volume. No quality loss.</div>
   </div>
 
   <hr>
@@ -71,15 +85,15 @@
   <div class="setting-row">
     <label>Speed mode:</label>
     <select id="speedMode" onchange="onSpeedModeChange()">
-      <option value="auto">Auto &mdash; pick minimum speed needed to fit</option>
+      <option value="auto">Auto &mdash; pick minimum speed to fit</option>
       <option value="manual">Manual &mdash; set speed yourself</option>
     </select>
   </div>
   <div class="setting-row" id="manualSpeedRow" style="display:none; margin-left:16px;">
-    <label>Speed multiplier: <span class="range-val"><b id="manualSpeedVal">1.00</b>x</span></label>
+    <label>Speed: <span class="range-val"><b id="manualSpeedVal">1.00</b>x</span></label>
     <input type="range" id="manualSpeed" min="10" max="400" value="100" step="5" oninput="onManualSpeedSlide()"/>
     <div id="manualSemitones" class="semitone-note"></div>
-    <div class="setting-desc">Higher speed = smaller file but higher pitch. 1.0x = original pitch. Each doubling = +12 semitones (one octave up).</div>
+    <div class="setting-desc">1.0x = original pitch. Each doubling = +12 semitones (one octave up).</div>
   </div>
 
   <hr>
@@ -89,72 +103,81 @@
       <input type="checkbox" id="pitchCorrect" checked/>
       Auto pitch-correct on decode
     </label>
-    <div class="setting-desc">When extracting audio that was sped up to fit, automatically slow it back down to the original speed and pitch using the Web Audio API.</div>
+    <div class="setting-desc">When audio was sped up to fit, automatically slows it back to the original speed and pitch on extraction.</div>
   </div>
 
   <hr>
-  <h3>Scatter passkey (steganography protection)</h3>
+  <h3>Scatter passkey</h3>
   <div class="setting-row">
     <label>
       <input type="checkbox" id="passkeyEnabled" onchange="onPasskeyToggle()"/>
       Enable scatter encoding with passkey
     </label>
-    <div class="setting-desc">Without a passkey, bits are written sequentially from pixel 0 &mdash; any LSB analysis tool detects the data instantly. With a passkey, bits are scattered across the image in a key-derived random order. Without the correct key the image looks like unmodified pixel noise.</div>
+    <div class="setting-desc">
+      Without a passkey, bits are written from pixel 0 in order &mdash; easy for steganalysis tools to detect.
+      With a passkey the bits are scattered in a key-derived random order, making detection much harder.
+    </div>
   </div>
   <div class="setting-row" id="passkeyRow" style="display:none; margin-left:16px;">
-    <label>Passkey: (same key required to decode later)</label>
+    <label>Passkey: (required to decode later)</label>
     <input type="text" id="passkeyInput" placeholder="enter any passphrase"
-      style="width:100%;max-width:320px;border:1px solid #999;padding:4px 6px;
-             font-family:Verdana,sans-serif;font-size:12px;margin-top:4px;"/>
-    <div class="setting-desc" style="margin-top:4px;">The key is never stored or sent anywhere. You must remember it to decode.</div>
+      autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+      style="width:100%;max-width:320px;border:1px solid #999;padding:7px 8px;
+             font-family:Verdana,sans-serif;font-size:14px;margin-top:4px;
+             -webkit-appearance:none;border-radius:0;"/>
+    <div class="setting-desc" style="margin-top:4px;">Key is never stored or sent anywhere. You must remember it to decode.</div>
   </div>
 
   <hr>
   <button class="btn-settings" onclick="toggleSettings()">Close settings</button>
 </div>
 
-<!-- ── HOW TO USE ─────────────────────────────────────────── -->
+<!-- ── HOW TO USE ────────────────────────────────────────────── -->
 <div class="howto">
   <b>How to use:</b>
   <ol>
-    <li><b>Encode:</b> Drop a PNG image and a song file, then click "Encode and Download".</li>
-    <li><b>Decode:</b> Drop an encoded PNG here or on the Decode tab, then click "Extract Audio".</li>
-    <li>If the image is too small, the tool speeds up the audio to fit. Decode undoes this automatically.</li>
-    <li>Always keep the output as PNG &mdash; saving as JPEG destroys the hidden data.</li>
+    <li><b>Encode:</b> Select a PNG image and a song file, then tap "Encode and Download".</li>
+    <li><b>Decode:</b> Drop or select an encoded PNG &mdash; it auto-detects and switches to the Decode tab.</li>
+    <li>If the image is too small, audio is sped up automatically to fit. Decode reverses this.</li>
+    <li>Always keep the output as PNG &mdash; re-saving as JPEG destroys the hidden data.</li>
   </ol>
 </div>
 
-<!-- ── TABS ──────────────────────────────────────────────── -->
+<!-- ── TABS ─────────────────────────────────────────────────── -->
 <div class="nav">
   <button class="tab active" id="tab-enc" onclick="switchTab('enc')">Encode</button>
   <button class="tab"        id="tab-dec" onclick="switchTab('dec')">Decode</button>
 </div>
 
-<!-- ── ENCODE PANEL ──────────────────────────────────────── -->
+<!-- ═══════════════════════════════════════════════════════════
+     ENCODE PANEL
+     ═══════════════════════════════════════════════════════════ -->
 <div class="panel active" id="panel-enc">
 
   <div class="section">
     <h3>Step 1 &mdash; Image file (PNG or BMP only)</h3>
     <div class="dz" id="imgDrop">
-      Click here to select an image, or drag and drop a file
+      Tap here to select an image, or drag and drop
       <div class="dz-file" id="imgFileLbl"></div>
-      <input type="file" id="imgInput" accept="image/png,image/bmp"/>
+      <div class="dz-hint" id="imgHint">Tap to select a file</div>
+      <!-- accept PNG + BMP; font-size 16px prevents iOS zoom on focus -->
+      <input type="file" id="imgInput" accept="image/png,image/bmp" style="font-size:16px;"/>
     </div>
-    <img id="imgPrev" class="preview"/>
+    <img id="imgPrev" class="preview" alt="Image preview"/>
 
+    <!-- Resize controls (shown after image loaded) -->
     <div class="resize-wrap" id="resizeWrap">
       <b style="font-size:12px;">Resize image (optional)</b><br>
-      <div style="font-size:11px;color:#555;margin-bottom:6px;">
-        Original: <b id="origDims">--</b>
-        &nbsp;|&nbsp; Capacity: <b id="newCap">--</b>
-        &nbsp;|&nbsp; Est. output PNG: <b id="estOutSize">--</b>
+      <div style="font-size:11px;color:#555;margin-bottom:6px;line-height:1.6;">
+        Original: <b id="origDims">--</b><br>
+        Capacity: <b id="newCap">--</b> &nbsp;|&nbsp; Est. output PNG: <b id="estOutSize">--</b>
       </div>
-      <div style="margin-bottom:5px;font-size:12px;">
+      <div style="margin-bottom:6px;font-size:12px;">
         Scale:
         <input type="number" id="rScale" min="1" max="1000" value="100" oninput="onResizeScale()"
-          style="width:55px;border:1px solid #999;padding:3px 4px;font-family:Verdana,sans-serif;font-size:12px;"/>%
+          style="width:58px;border:1px solid #999;padding:4px;font-family:Verdana,sans-serif;font-size:12px;-webkit-appearance:none;border-radius:0;"/>%
         &nbsp;
-        <span class="preset-row" style="display:inline-flex;">
+        <div class="preset-row" style="margin-top:5px;">
           <button class="btn-sm" onclick="applyScale(25)">25%</button>
           <button class="btn-sm" onclick="applyScale(50)">50%</button>
           <button class="btn-sm" onclick="applyScale(75)">75%</button>
@@ -162,30 +185,32 @@
           <button class="btn-sm" onclick="applyScale(150)">150%</button>
           <button class="btn-sm" onclick="applyScale(200)">200%</button>
           <button class="btn-sm" onclick="resetResize()">Reset</button>
-        </span>
+        </div>
       </div>
       <div class="resize-row">
-        <label>Width px:</label>
+        <label>W px:</label>
         <input type="number" id="rW" min="1" max="99999" oninput="onResizeW()"/>
-        <label>x Height px:</label>
+        <label>H px:</label>
         <input type="number" id="rH" min="1" max="99999" oninput="onResizeH()"/>
-        <button class="lock-btn locked" id="lockBtn" onclick="toggleLock()">Lock ratio: ON</button>
+        <button class="lock-btn locked" id="lockBtn" onclick="toggleLock()">Lock: ON</button>
       </div>
     </div>
 
-    <div class="cap-row" id="capRow">
-      <div class="cap-lbl">Capacity used:</div>
+    <!-- Capacity bar -->
+    <div class="cap-row" id="capRow" style="display:none;">
+      <div class="cap-lbl">Capacity:</div>
       <div class="cap-track"><div class="cap-fill" id="capFill"></div></div>
       <div class="cap-val" id="capVal">--</div>
     </div>
   </div>
 
   <div class="section">
-    <h3>Step 2 &mdash; Song file (any audio format)</h3>
+    <h3>Step 2 &mdash; Song file (MP3, WAV, FLAC, etc.)</h3>
     <div class="dz" id="audDrop">
-      Click here to select an audio file, or drag and drop
+      Tap here to select an audio file, or drag and drop
       <div class="dz-file" id="audFileLbl"></div>
-      <input type="file" id="audInput" accept="audio/*"/>
+      <div class="dz-hint">Tap to select a file</div>
+      <input type="file" id="audInput" accept="audio/*" style="font-size:16px;"/>
     </div>
     <div class="badge" id="badge"></div>
   </div>
@@ -195,32 +220,43 @@
     <div class="prog-track"><div class="prog-fill" id="encFill"></div></div>
   </div>
   <div class="status" id="encStatus"></div>
+  <!-- iOS notice shown by JS after encode if download may not have worked -->
+  <div class="ios-note" id="iosNote"></div>
   <button class="btn btn-primary" id="encBtn" onclick="doEncode()" disabled>
     Encode and Download Image
   </button>
 
 </div>
 
-<!-- ── DECODE PANEL ──────────────────────────────────────── -->
+<!-- ═══════════════════════════════════════════════════════════
+     DECODE PANEL
+     ═══════════════════════════════════════════════════════════ -->
 <div class="panel" id="panel-dec">
 
   <div class="section">
     <h3>Encoded image file</h3>
     <div class="dz" id="decDrop">
-      Click here to select the encoded PNG, or drag and drop
+      Tap here to select the encoded PNG, or drag and drop
       <div class="dz-file" id="decFileLbl"></div>
-      <input type="file" id="decInput" accept="image/png,image/bmp"/>
+      <div class="dz-hint">Tap to select a file</div>
+      <input type="file" id="decInput" accept="image/png,image/bmp" style="font-size:16px;"/>
     </div>
-    <img id="decPrev" class="preview"/>
+    <img id="decPrev" class="preview" alt="Encoded image preview"/>
 
-    <div id="decPasskeyRow" style="display:none;margin-top:8px;font-size:12px;">
-      <label><b>Passkey:</b> (required if image was encoded with a passkey)</label><br>
+    <!-- Passkey input (shown by JS when passkeyEnabled is on) -->
+    <div id="decPasskeyRow" style="display:none;margin-top:10px;font-size:12px;">
+      <label style="font-weight:bold;display:block;margin-bottom:4px;">
+        Passkey: (required if image was encoded with one)
+      </label>
       <input type="text" id="decPasskey" placeholder="enter passphrase used during encoding"
-        style="width:100%;max-width:320px;border:1px solid #999;padding:4px 6px;
-               font-family:Verdana,sans-serif;font-size:12px;margin-top:4px;"/>
-      <div style="font-size:11px;color:#555;margin-top:3px;">Leave blank if no passkey was used. Wrong key produces garbage audio.</div>
+        autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+        style="width:100%;max-width:320px;border:1px solid #999;padding:7px 8px;
+               font-family:Verdana,sans-serif;font-size:14px;margin-top:4px;
+               -webkit-appearance:none;border-radius:0;"/>
+      <div style="font-size:11px;color:#555;margin-top:4px;">Leave blank if no passkey was used. Wrong key produces garbage.</div>
     </div>
 
+    <!-- Info card (shown after extraction) -->
     <div class="info-card" id="infoCard">
       <h3 style="margin-bottom:8px;">Extracted audio information</h3>
       <div class="info-grid">
@@ -233,8 +269,9 @@
       <div class="info-note" id="iNote"></div>
     </div>
 
+    <!-- Audio player -->
     <div class="audio-wrap" id="audioWrap">
-      <audio id="audioOut" controls></audio>
+      <audio id="audioOut" controls preload="none"></audio>
       <button class="btn-sm" onclick="dlAudio()">Download audio (.wav)</button>
     </div>
   </div>
@@ -251,7 +288,7 @@
 </div>
 
 <hr>
-<p style="font-size:11px;color:#777;">AudioHide &mdash; all processing is local, nothing is sent to any server.</p>
+<p style="font-size:11px;color:#777;">AudioHide &mdash; all processing is local, nothing is sent to any server. &nbsp;|&nbsp; <a href="https://github.com/kuro123ri/audiohide" target="_blank" rel="noopener">GitHub</a></p>
 
 <script src="audiohide.js"></script>
 </body>
