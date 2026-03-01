@@ -10,7 +10,9 @@ also a open source so feel free to use no credit needed
 **[Open AudioHide](https://kuro123ri.github.io/audiohide/)** <-- click this ;P
 
 ---
+![use](https://github.com/user-attachments/assets/399af6b6-8c37-452e-b3c0-d1f800b02c0e)
 
+---
 ## What it does
 
 AudioHide lets you embed an audio file (MP3, WAV, FLAC, etc.) into a PNG image.  
@@ -30,6 +32,8 @@ Anyone with the tool can extract the audio back out — or no one can, if you us
 2. Drop an AudioHide-encoded PNG
 3. Click **Extract Audio**
 4. Play or download the audio
+
+
 
 try decode on this lemon
 
