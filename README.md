@@ -31,6 +31,10 @@ Anyone with the tool can extract the audio back out — or no one can, if you us
 3. Click **Extract Audio**
 4. Play or download the audio
 
+try decode on this lemon
+
+![lemons](https://github.com/kuro123ri/audiohide/edit/main/lemon.PNG?raw=true)
+
 ## Features
 
 - **100% local** — nothing leaves your browser
