@@ -82,7 +82,8 @@ button {
 }
 .settings-panel.open { display: block; }
 .setting-row { margin-bottom: 12px; }
-.setting-row label { display: block; font-weight: bold; margin-bottom: 4px; font-size: 12px; line-height: 1.4; }
+/* :not(.toggle-wrap) — don't override the flex layout needed for the toggle pill */
+.setting-row label:not(.toggle-wrap) { display: block; font-weight: bold; margin-bottom: 4px; font-size: 12px; line-height: 1.4; }
 .setting-row input[type=checkbox] { margin-right: 6px; vertical-align: middle; width: 16px; height: 16px; }
 .setting-row input[type=number] {
   width: 70px; border: 1px solid #999; padding: 5px;
