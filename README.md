@@ -3,6 +3,8 @@
 Hide a song inside a PNG image using LSB (Least Significant Bit) steganography.  
 Runs entirely in your browser — no server, no file uploads, no tracking.
 
+also a open source so feel free to use no credit needed
+
 ## Live tool
 
 **[Open AudioHide](https://kuro123ri.github.io/audiohide/)** <-- click this ;P
