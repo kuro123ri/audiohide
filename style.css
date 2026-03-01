@@ -1,0 +1,217 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: Verdana, Arial, sans-serif;
+  font-size: 13px;
+  background: #ffffff;
+  color: #000000;
+  padding: 20px;
+  max-width: 680px;
+  margin: 0 auto;
+}
+h1 { font-size: 20px; font-weight: bold; margin-bottom: 2px; }
+h2 { font-size: 14px; font-weight: bold; margin-bottom: 8px; border-bottom: 1px solid #999; padding-bottom: 3px; }
+h3 { font-size: 13px; font-weight: bold; margin-bottom: 6px; }
+p  { margin-bottom: 6px; line-height: 1.5; }
+a  { color: #0000cc; }
+a:visited { color: #551a8b; }
+hr { border: none; border-top: 1px solid #aaa; margin: 14px 0; }
+.subtitle { font-size: 11px; color: #555; margin-bottom: 16px; }
+
+/* ── Top bar ── */
+.topbar { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; }
+.btn-settings {
+  font-family: Verdana, Arial, sans-serif;
+  font-size: 11px;
+  padding: 3px 10px;
+  border: 1px solid #666;
+  background: #e8e8e8;
+  cursor: pointer;
+}
+.btn-settings:hover { background: #d0d0d0; }
+
+/* ── Nav tabs ── */
+.nav { margin: 12px 0; }
+.nav button {
+  font-family: Verdana, Arial, sans-serif;
+  font-size: 12px;
+  padding: 4px 12px;
+  border: 1px solid #666;
+  background: #e0e0e0;
+  cursor: pointer;
+  margin-right: 4px;
+}
+.nav button.active { background: #000; color: #fff; border-color: #000; }
+.nav button:hover:not(.active) { background: #ccc; }
+
+/* ── Settings panel ── */
+.settings-panel {
+  display: none;
+  border: 1px solid #999;
+  background: #f8f8f8;
+  padding: 12px;
+  margin-bottom: 14px;
+}
+.settings-panel.open { display: block; }
+.setting-row { margin-bottom: 10px; }
+.setting-row label { display: block; font-weight: bold; margin-bottom: 4px; font-size: 12px; }
+.setting-row input[type=number] {
+  width: 70px;
+  border: 1px solid #999;
+  padding: 3px 5px;
+  font-family: Verdana, Arial, sans-serif;
+  font-size: 12px;
+}
+.setting-row input[type=checkbox] { margin-right: 5px; vertical-align: middle; }
+.setting-desc { font-size: 11px; color: #555; margin-top: 3px; line-height: 1.4; }
+
+/* ── Range + select ── */
+input[type=range] { display: block; width: 100%; max-width: 300px; margin: 4px 0 2px; cursor: pointer; }
+select {
+  border: 1px solid #999;
+  padding: 3px 5px;
+  font-family: Verdana, Arial, sans-serif;
+  font-size: 12px;
+  background: #fff;
+  cursor: pointer;
+}
+.range-val { font-size: 11px; color: #333; margin-bottom: 4px; }
+.semitone-note { font-size: 11px; color: #884400; font-weight: bold; margin-top: 2px; }
+
+/* ── Panels ── */
+.panel { display: none; }
+.panel.active { display: block; }
+
+/* ── Section boxes ── */
+.section { border: 1px solid #ccc; padding: 10px; margin-bottom: 12px; background: #fafafa; }
+
+/* ── Drop zones ── */
+.dz {
+  border: 1px dashed #999;
+  padding: 18px 12px;
+  text-align: center;
+  cursor: pointer;
+  position: relative;
+  background: #fff;
+  color: #333;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.dz:hover, .dz.over { border-color: #000; background: #f5f5f5; }
+.dz input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+.dz-file { color: #000055; font-weight: bold; margin-top: 4px; word-break: break-all; }
+
+/* ── Image preview ── */
+.preview { max-width: 100%; max-height: 160px; object-fit: contain; margin-top: 8px; display: none; border: 1px solid #ccc; }
+
+/* ── Capacity bar ── */
+.cap-row { display: none; margin-top: 8px; align-items: center; gap: 8px; }
+.cap-lbl { font-size: 11px; color: #555; white-space: nowrap; }
+.cap-track { flex: 1; height: 6px; background: #ddd; border: 1px solid #bbb; overflow: hidden; }
+.cap-fill { height: 100%; background: #006600; transition: width .3s, background .3s; }
+.cap-fill.ok   { background: #006600; }
+.cap-fill.warn { background: #886600; }
+.cap-fill.over { background: #aa0000; }
+.cap-val { font-size: 11px; color: #555; white-space: nowrap; }
+
+/* ── Badge / info box ── */
+.badge {
+  display: none;
+  margin-top: 8px;
+  border: 1px solid #aaa;
+  background: #fffbe6;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.badge.green { background: #efffef; border-color: #5a5; }
+.badge.red   { background: #fff0f0; border-color: #a55; }
+.badge b { color: #000; }
+
+/* ── Progress bar ── */
+.prog-wrap { display: none; margin: 8px 0; }
+.prog-lbl-row { display: flex; justify-content: space-between; font-size: 11px; color: #555; margin-bottom: 3px; }
+.prog-track { height: 10px; background: #ddd; border: 1px solid #bbb; overflow: hidden; }
+.prog-fill { height: 100%; background: #000088; width: 0%; }
+
+/* ── Status messages ── */
+.status { display: none; margin: 8px 0; padding: 7px 10px; border: 1px solid #aaa; font-size: 12px; line-height: 1.5; }
+.status.ok   { background: #efffef; border-color: #5a5; color: #004400; }
+.status.err  { background: #fff0f0; border-color: #a55; color: #550000; }
+.status.info { background: #f0f4ff; border-color: #55a; color: #000044; }
+
+/* ── Buttons ── */
+.btn {
+  display: block;
+  width: 100%;
+  padding: 7px 14px;
+  margin-top: 8px;
+  font-family: Verdana, Arial, sans-serif;
+  font-size: 13px;
+  font-weight: bold;
+  border: 2px solid #333;
+  background: #e0e0e0;
+  cursor: pointer;
+}
+.btn:hover:not(:disabled) { background: #cccccc; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn-primary { background: #ddeeff; border-color: #336; }
+.btn-primary:hover:not(:disabled) { background: #bbddff; }
+.btn-action  { background: #ddf0dd; border-color: #363; }
+.btn-action:hover:not(:disabled) { background: #bbddbb; }
+.btn-sm {
+  display: inline-block;
+  width: auto;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: normal;
+  margin-top: 6px;
+  border: 1px solid #666;
+  background: #e8e8e8;
+  cursor: pointer;
+  font-family: Verdana, Arial, sans-serif;
+}
+.btn-sm:hover { background: #d0d0d0; }
+
+/* ── Audio player ── */
+.audio-wrap { display: none; margin-top: 8px; }
+audio { width: 100%; margin-bottom: 6px; }
+
+/* ── Decode info card ── */
+.info-card { display: none; margin-top: 10px; border: 1px solid #bbb; padding: 10px; background: #f8f8f8; }
+.info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.i-lbl { font-size: 10px; color: #555; text-transform: uppercase; margin-bottom: 2px; }
+.i-val { font-size: 13px; font-weight: bold; }
+.i-val.hl { color: #884400; }
+.i-val.ok { color: #004400; }
+.info-note { font-size: 11px; color: #333; border-top: 1px solid #ccc; padding-top: 8px; line-height: 1.6; }
+
+/* ── Resize controls ── */
+.resize-wrap { display: none; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc; }
+.resize-row  { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 5px; }
+.resize-row label { font-size: 12px; white-space: nowrap; }
+.resize-row input[type=number] {
+  width: 80px;
+  border: 1px solid #999;
+  padding: 3px 5px;
+  font-family: Verdana, Arial, sans-serif;
+  font-size: 12px;
+}
+.lock-btn {
+  font-family: Verdana, Arial, sans-serif;
+  font-size: 11px;
+  padding: 3px 8px;
+  border: 1px solid #666;
+  background: #e0e0e0;
+  cursor: pointer;
+}
+.lock-btn.locked { background: #ddeedd; border-color: #449; font-weight: bold; }
+.preset-row { display: flex; gap: 3px; flex-wrap: wrap; margin: 4px 0 5px; }
+
+/* ── Links ── */
+.sug-link { color: #0000cc; cursor: pointer; text-decoration: underline; }
+.sug-link:hover { color: #cc0000; }
+
+/* ── How to use ── */
+.howto { background: #fffff0; border: 1px solid #cc9; padding: 10px 12px; font-size: 12px; line-height: 1.7; margin-bottom: 14px; }
+.howto ol { margin-left: 18px; }
+.howto li { margin-bottom: 3px; }
