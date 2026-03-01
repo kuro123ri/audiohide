@@ -5,7 +5,7 @@ Runs entirely in your browser — no server, no file uploads, no tracking.
 
 ## Live tool
 
-**[Open AudioHide](https://kuro123ri.github.io/audiohide/)**
+**[Open AudioHide](https://kuro123ri.github.io/audiohide/)** <-- click this ;P
 
 ---
 
