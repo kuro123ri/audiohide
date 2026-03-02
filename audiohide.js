@@ -42,7 +42,7 @@
 // VERSION & CONSTANTS
 // ═══════════════════════════════════════════════════════════════
 
-var VERSION = '1.0.29';
+var VERSION = '1.0.30';
 
 /** Magic bytes at the start of every AudioHide payload. */
 var MAGIC = [0x41, 0x48, 0x49, 0x44]; // "AHID"
@@ -92,7 +92,6 @@ if (!String.prototype.padStart) {
 
 // ═══════════════════════════════════════════════════════════════
 // STORAGE HELPER
-// Wraps localStorage with try/catch (private browsing can throw).
 // ═══════════════════════════════════════════════════════════════
 
 var Store = {
@@ -110,21 +109,21 @@ var Store = {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// STATE  (all mutable globals in one place)
-// ═══════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════���═══════════════════════════
 
-var gImgFile       = null;   // carrier image File object
-var gAudFile       = null;   // audio File object to embed
-var gDecFile       = null;   // encoded image to decode
-var gExtracted     = null;   // Blob of extracted WAV (for download)
-var gSpeed         = null;   // chosen encode speed (set by analyseCapacity)
-var gAudDurSec     = null;   // duration of loaded audio in seconds
-var gLastBlobSize  = 0;      // actual size of last output PNG (bytes)
-var gOrigW         = null;   // original image width  (pre-resize)
-var gOrigH         = null;   // original image height (pre-resize)
-var gAspectLock    = true;   // whether W/H resize inputs stay locked
-var gCancelEnc     = false;  // set true to abort an in-progress encode
-var gCancelDec     = false;  // set true to abort an in-progress decode
+var gImgFile       = null;
+var gAudFile       = null;
+var gDecFile       = null;
+var gExtracted     = null;
+var gSpeed         = null;
+var gAudDurSec     = null;
+var gLastBlobSize  = 0;
+var gOrigW         = null;
+var gOrigH         = null;
+var gAspectLock    = true;
+var gCancelEnc     = false;
+var gCancelDec     = false;
 
 // ═══════════════════════════════════════════════════════════════
 // DEVICE DETECTION
@@ -133,23 +132,16 @@ var gCancelDec     = false;  // set true to abort an in-progress decode
 var IS_IOS    = /iP(hone|ad|od)/i.test(navigator.userAgent);
 var IS_MOBILE = IS_IOS || /Android/i.test(navigator.userAgent);
 
-/**
- * USE_WORKER — true if Web Workers are available and likely to work.
- * This is a var (not const) so the worker error handler can set it to false
- * at runtime if the worker script fails to load (e.g. wrong path, CSP block).
- * When set to false, lsbEmbed/lsbExtract automatically use the main-thread fallback.
- */
 var USE_WORKER = (function () {
   if (typeof Worker === 'undefined') return false;
   if (window.location.protocol === 'file:') return false;
   return true;
 }());
 
-/** Log of worker/debug events for the debug panel. */
 var gDebugLog = [];
 
 // ═══════════════════════════════════════════════════════════════
-// AUDIO CONTEXT COMPAT  (webkit prefix for old iOS/Safari)
+// AUDIO CONTEXT COMPAT
 // ═══════════════════════════════════════════════════════════════
 
 var AudioCtx        = window.AudioContext        || window.webkitAudioContext;
@@ -159,35 +151,28 @@ var OfflineAudioCtx = window.OfflineAudioContext || window.webkitOfflineAudioCon
 // HELPERS
 // ═══════════════════════════════════════════════════════════════
 
-/** Shorthand for document.getElementById. */
 function $(id) { return document.getElementById(id); }
 
-/** Append a line to the debug log (shown in the debug panel). */
 function dbg(msg) {
   var ts  = new Date().toISOString().substr(11, 12);
   var line = '[' + ts + '] ' + msg;
   gDebugLog.push(line);
-  // Keep last 50 lines only
   if (gDebugLog.length > 50) gDebugLog.shift();
-  // Live-update the panel if open
   var el = $('debugLog');
   if (el) el.textContent = gDebugLog.join('\n');
 }
 
-/** Format bytes as human-readable string. */
 function fmtB(b) {
   if (b < 1024)    return b + ' B';
   if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
   return (b / 1048576).toFixed(2) + ' MB';
 }
 
-/** Format milliseconds as M:SS. */
 function fmtT(ms) {
   var s = Math.round(ms / 1000), m = Math.floor(s / 60);
   return m + ':' + String(s % 60).padStart(2, '0');
 }
 
-/** Format a remaining-time estimate as "8s" or "2m 15s". */
 function fmtEta(ms) {
   var s = Math.round(ms / 1000);
   if (s < 2)  return 'almost done';
@@ -199,7 +184,6 @@ function fmtEta(ms) {
 // UI HELPERS
 // ═══════════════════════════════════════════════════════════════
 
-/** Show a status bar with a given class (ok / err / info / warn). */
 function st(id, cls, msg) {
   var el = $(id);
   el.className    = 'status ' + cls;
@@ -207,17 +191,14 @@ function st(id, cls, msg) {
   el.style.display = 'block';
 }
 
-/** Hide a status bar. */
 function stHide(id) { $(id).style.display = 'none'; }
 
-/** Update a progress bar set (fill width, label, percentage text). */
 function prog(fillId, lblId, pctId, pct, label) {
   $(fillId).style.width = Math.min(pct, 100) + '%';
   $(lblId).textContent  = label;
   $(pctId).textContent  = Math.round(pct) + '%';
 }
 
-/** Show or hide the cancel button for a given operation. */
 function setCancelVisible(btnId, visible) {
   var el = $(btnId);
   if (el) el.style.display = visible ? 'inline-block' : 'none';
@@ -227,10 +208,6 @@ function setCancelVisible(btnId, visible) {
 // FILE / IMAGE COMPAT
 // ═══════════════════════════════════════════════════════════════
 
-/**
- * Read a File as ArrayBuffer.
- * File.arrayBuffer() is not available in Safari < 14.1 — use FileReader fallback.
- */
 function fileToArrayBuffer(file) {
   if (file.arrayBuffer) return file.arrayBuffer();
   return new Promise(function (resolve, reject) {
@@ -241,10 +218,6 @@ function fileToArrayBuffer(file) {
   });
 }
 
-/**
- * Load a File or Blob as a drawable image.
- * createImageBitmap() is not in Safari < 15 — fall back to <img>.
- */
 function loadImageBitmap(source) {
   if (typeof createImageBitmap === 'function') {
     return createImageBitmap(source);
@@ -258,25 +231,16 @@ function loadImageBitmap(source) {
   });
 }
 
-/**
- * Decode audio data — wraps the callback form of decodeAudioData so it
- * returns a Promise on all browsers (old Safari only has the callback form).
- */
 function decodeAudio(ac, buffer) {
   return new Promise(function (resolve, reject) {
     ac.decodeAudioData(buffer, resolve, reject);
   });
 }
 
-/** Safely close an AudioContext — throws on some old browsers. */
 function safeClose(ac) {
   try { if (ac && ac.close) ac.close(); } catch (e) {}
 }
 
-/**
- * Trigger a file download.
- * iOS Safari < 13 ignores a.download on blob URLs — show a fallback tap-link.
- */
 function triggerDownload(blob, filename) {
   var url = URL.createObjectURL(blob);
   var a   = document.createElement('a');
@@ -297,7 +261,6 @@ function triggerDownload(blob, filename) {
     }
   }
 
-  // Revoke after a delay so the iOS tap-link above still works
   setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
 }
 
@@ -321,7 +284,6 @@ function getLsbDepth() {
   return el ? (parseInt(el.value, 10) || 1) : 1;
 }
 
-/** Returns 2 if stereo mode is enabled, otherwise 1. */
 function getChannels() {
   var el = $('stereoAudio');
   return (el && el.checked) ? 2 : 1;
@@ -373,7 +335,6 @@ function onMultiFrameToggle() {
   var on = $('multiFrameMode') && $('multiFrameMode').checked;
   var opts = $('mfOptions');
   if (opts) opts.style.display = on ? 'block' : 'none';
-  // Update encode button label
   var btn = $('encBtn');
   if (btn) btn.textContent = on ? 'Encode and Download APNG' : 'Encode and Download Image';
   analyseCapacity();
@@ -411,7 +372,6 @@ function updateThemeButton() {
   btn.title       = tips[theme]   || '';
 }
 
-/** Cycle: light → dark → system → light … */
 function cycleTheme() {
   var next = { light: 'dark', dark: 'system', system: 'light' };
   applyTheme(next[getCurrentTheme()] || 'light');
@@ -430,7 +390,6 @@ function switchTab(t) {
 
 // ═══════════════════════════════════════════════════════════════
 // SCATTER PRNG
-// FNV-1a hash → Mulberry32 seed → Fisher-Yates segment shuffle
 // ═══════════════════════════════════════════════════════════════
 
 function mulberry32(seed) {
@@ -450,10 +409,6 @@ function hashKey(str) {
   return h >>> 0;
 }
 
-/**
- * Build a scatter map for a given passkey.
- * Returns fn(channelIndex) → shuffledChannelIndex.
- */
 function buildScatterMap(key, availChannels) {
   var segCount = Math.ceil(availChannels / SCATTER_SEG);
   var order    = new Uint32Array(segCount);
@@ -473,7 +428,6 @@ function buildScatterMap(key, availChannels) {
   };
 }
 
-/** Returns the encode scatter map, or null if passkey is not enabled. */
 function getScatterKey() {
   if (!$('passkeyEnabled') || !$('passkeyEnabled').checked) return null;
   return $('passkeyInput').value.trim() || null;
@@ -495,7 +449,7 @@ function setupDrop(dropId, inputId, cb) {
   $(inputId).addEventListener('change', function (e) {
     var f = e.target.files[0];
     if (f) cb(f);
-    e.target.value = ''; // allow re-selecting the same file
+    e.target.value = '';
   });
 }
 
@@ -503,26 +457,17 @@ function setupDrop(dropId, inputId, cb) {
 // CAPACITY MATH
 // ═══════════════════════════════════════════════════════════════
 
-/**
- * Maximum bytes that can be stored in a W×H image.
- * bpc  = bits per channel (1 or 2)
- */
 function pixelCap(w, h, bpc) {
   bpc = (bpc !== undefined) ? bpc : getLsbDepth();
   return Math.floor(w * h * 3 * bpc / 8) - HEADER_BYTES;
 }
 
-/**
- * Estimated WAV byte size for a given duration, speed, sample-rate, and channels.
- * Used to check if audio will fit before encoding.
- */
 function wavEst(durSec, speed, sr, channels) {
   var rate = sr       || getOutSR();
   var ch   = channels || getChannels();
   return Math.ceil((durSec / speed) * rate) * ch * 2 + 44;
 }
 
-/** Pick the slowest speed from SPEEDS[] that fits within capacity. */
 function pickSpeed(durSec, cap) {
   for (var i = 0; i < SPEEDS.length; i++) {
     if (wavEst(durSec, SPEEDS[i]) <= cap) return SPEEDS[i];
@@ -534,7 +479,6 @@ function pickSpeed(durSec, cap) {
 // AUDIO PROCESSING
 // ═══════════════════════════════════════════════════════════════
 
-/** Decode audio and return its duration in seconds. */
 function getAudioDuration(arrayBuffer) {
   var ac = new AudioCtx();
   return decodeAudio(ac, arrayBuffer.slice(0))
@@ -549,10 +493,6 @@ function getAudioDuration(arrayBuffer) {
     });
 }
 
-/**
- * Decode, resample, optionally speed-up, and optionally normalise audio.
- * Returns { wav: Uint8Array, origDurMs: number }.
- */
 function processAudio(arrayBuffer, speed) {
   var SR       = getOutSR();
   var numCh    = getChannels();
@@ -574,7 +514,6 @@ function processAudio(arrayBuffer, speed) {
       return off.startRendering();
     })
     .then(function (rendered) {
-      // Optional normalisation — boost quiet audio to ~98% of peak
       var normalEl = $('normalizeAudio');
       if (normalEl && normalEl.checked) {
         for (var c = 0; c < rendered.numberOfChannels; c++) {
@@ -595,9 +534,46 @@ function processAudio(arrayBuffer, speed) {
 }
 
 /**
- * Reverse the speed-up applied during encoding to restore original pitch.
- * Returns a new WAV Uint8Array, or the original on error.
+ * processAudio variant for multi-frame — always mono, optionally different SR.
  */
+function processAudioMF(arrayBuffer, speed) {
+  var SR    = getOutSR();
+  var ac    = new AudioCtx();
+  var origDurMs;
+
+  return decodeAudio(ac, arrayBuffer.slice(0))
+    .then(function (decoded) {
+      origDurMs  = Math.round(decoded.duration * 1000);
+      var newLen = Math.ceil((decoded.duration / speed) * SR);
+
+      // Multi-frame always uses mono
+      var off = new OfflineAudioCtx(1, newLen, SR);
+      var src = off.createBufferSource();
+      src.buffer             = decoded;
+      src.playbackRate.value = speed;
+      src.connect(off.destination);
+      src.start(0);
+      safeClose(ac);
+      return off.startRendering();
+    })
+    .then(function (rendered) {
+      var normalEl = $('normalizeAudio');
+      if (normalEl && normalEl.checked) {
+        var ch   = rendered.getChannelData(0);
+        var peak = 0;
+        for (var i = 0; i < ch.length; i++) {
+          var a = Math.abs(ch[i]);
+          if (a > peak) peak = a;
+        }
+        if (peak > 0.001 && peak < 0.97) {
+          var gain = 0.98 / peak;
+          for (var j = 0; j < ch.length; j++) ch[j] *= gain;
+        }
+      }
+      return { wav: bufToWavMono(rendered), origDurMs: origDurMs };
+    });
+}
+
 function pitchCorrect(wavBytes, speed) {
   var ac  = new AudioCtx();
   var buf = wavBytes.buffer.slice(wavBytes.byteOffset, wavBytes.byteOffset + wavBytes.byteLength);
@@ -618,10 +594,6 @@ function pitchCorrect(wavBytes, speed) {
     ['catch'](function ()     { safeClose(ac); return wavBytes; });
 }
 
-/**
- * Convert an AudioBuffer to a PCM WAV Uint8Array.
- * Supports mono and stereo (interleaved L, R, L, R …).
- */
 function bufToWav(buf) {
   var numCh    = buf.numberOfChannels;
   var sr       = buf.sampleRate;
@@ -634,23 +606,20 @@ function bufToWav(buf) {
     for (var i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i));
   };
 
-  // WAV RIFF header
   ws(0,  'RIFF'); v.setUint32(4,  36 + dataSize,      true);
   ws(8,  'WAVE');
   ws(12, 'fmt '); v.setUint32(16, 16,                  true);
-  v.setUint16(20, 1,             true); // PCM format
-  v.setUint16(22, numCh,         true); // channel count
-  v.setUint32(24, sr,            true); // sample rate
-  v.setUint32(28, sr * numCh * 2, true); // byte rate
-  v.setUint16(32, numCh * 2,     true); // block align
-  v.setUint16(34, 16,            true); // bits per sample
+  v.setUint16(20, 1,             true);
+  v.setUint16(22, numCh,         true);
+  v.setUint32(24, sr,            true);
+  v.setUint32(28, sr * numCh * 2, true);
+  v.setUint16(32, numCh * 2,     true);
+  v.setUint16(34, 16,            true);
   ws(36, 'data'); v.setUint32(40, dataSize, true);
 
-  // Gather channel data pointers
   var channels = [];
   for (var c = 0; c < numCh; c++) channels.push(buf.getChannelData(c));
 
-  // Interleave samples: [L0, R0, L1, R1, …]
   var offset = 44;
   for (var i = 0; i < ns; i++) {
     for (var ch = 0; ch < numCh; ch++) {
@@ -663,15 +632,44 @@ function bufToWav(buf) {
   return new Uint8Array(out);
 }
 
+/** Mono-only WAV builder (for multi-frame) */
+function bufToWavMono(buf) {
+  var sr       = buf.sampleRate;
+  var ns       = buf.length;
+  var dataSize = ns * 2;
+  var out      = new ArrayBuffer(44 + dataSize);
+  var v        = new DataView(out);
+
+  var ws = function (o, s) {
+    for (var i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i));
+  };
+
+  ws(0,  'RIFF'); v.setUint32(4,  36 + dataSize, true);
+  ws(8,  'WAVE');
+  ws(12, 'fmt '); v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true);
+  v.setUint32(24, sr, true);
+  v.setUint32(28, sr * 2, true);
+  v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true);
+  ws(36, 'data'); v.setUint32(40, dataSize, true);
+
+  var ch = buf.getChannelData(0);
+  var offset = 44;
+  for (var i = 0; i < ns; i++) {
+    var x = Math.max(-1, Math.min(1, ch[i]));
+    v.setInt16(offset, x < 0 ? x * 0x8000 : x * 0x7FFF, true);
+    offset += 2;
+  }
+
+  return new Uint8Array(out);
+}
+
 // ═══════════════════════════════════════════════════════════════
 // HEADER + PAYLOAD
 // ═══════════════════════════════════════════════════════════════
 
-/**
- * Prepend the 20-byte AHID header to the WAV data.
- * bpc      — bits per channel (1 or 2)
- * channels — audio channels (1=mono, 2=stereo)
- */
 function buildPayload(wav, speedX1000, origDurMs, bpc, channels) {
   var p  = new Uint8Array(HEADER_BYTES + wav.length);
   var dv = new DataView(p.buffer);
@@ -686,21 +684,9 @@ function buildPayload(wav, speedX1000, origDurMs, bpc, channels) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// LSB ENCODE / DECODE  —  Worker path + main-thread fallback
-//
-// Why both?  Web Workers can't run over file:// in Chrome, and not
-// all old browsers support them.  USE_WORKER is checked at startup.
+// LSB ENCODE / DECODE
 // ═══════════════════════════════════════════════════════════════
 
-/**
- * Embed using a Web Worker.
- *
- * IMPORTANT: We .slice() both buffers before transferring so the caller's
- * references stay valid. The Worker returns its modified buffer which we
- * wrap in a fresh Uint8ClampedArray for the caller.
- *
- * Resolves with: Uint8ClampedArray (the modified pixel data)
- */
 function lsbEmbedWorker(data, payload, onProg, scatterKey, bpc, totalChannels) {
   return new Promise(function (resolve, reject) {
     var worker;
@@ -720,12 +706,10 @@ function lsbEmbedWorker(data, payload, onProg, scatterKey, bpc, totalChannels) {
       var msg = e.data;
       if (msg.type === 'progress') {
         onProg(msg.value, Date.now());
-
       } else if (msg.type === 'done') {
         worker.terminate();
         dbg('Worker embed done.');
         resolve(new Uint8ClampedArray(msg.data));
-
       } else if (msg.type === 'error') {
         worker.terminate();
         dbg('Worker embed error: ' + msg.message);
@@ -740,7 +724,6 @@ function lsbEmbedWorker(data, payload, onProg, scatterKey, bpc, totalChannels) {
         dbg('Worker script failed to load — disabling Workers, retrying on main thread.');
         USE_WORKER = false;
         var scatter = scatterKey ? buildScatterMap(scatterKey, totalChannels) : null;
-        // data is still valid because we sliced below
         lsbEmbedMainThread(data, payload, onProg, scatter, bpc, encCancelRef).then(
           function () { resolve(data); }, reject
         );
@@ -753,8 +736,6 @@ function lsbEmbedWorker(data, payload, onProg, scatterKey, bpc, totalChannels) {
 
     dbg('Worker embed start — ' + fmtB(payload.length) + ', bpc=' + bpc + ', scatter=' + !!scatterKey);
 
-    // CRITICAL: .slice() both buffers so the originals remain usable on the main thread.
-    // Without this, transferring detaches imgData.data and causes "zero elements" errors.
     var dataCopy    = data.buffer.slice(0);
     var payloadCopy = payload.buffer.slice(0);
 
@@ -769,10 +750,6 @@ function lsbEmbedWorker(data, payload, onProg, scatterKey, bpc, totalChannels) {
   });
 }
 
-/**
- * Extract numBytes from imageData using a Web Worker.
- * Auto-falls back to main thread if the Worker script fails to load.
- */
 function lsbExtractWorker(data, numBytes, startBit, onProg, scatterKey, bpc, totalChannels) {
   return new Promise(function (resolve, reject) {
     var worker;
@@ -805,7 +782,7 @@ function lsbExtractWorker(data, numBytes, startBit, onProg, scatterKey, bpc, tot
       worker.terminate();
       var isLoadFailure = !ev.filename && !ev.lineno;
       if (isLoadFailure) {
-        dbg('Worker script failed to load �� disabling Workers, retrying on main thread.');
+        dbg('Worker script failed to load — disabling Workers, retrying on main thread.');
         USE_WORKER = false;
         var scatter = scatterKey ? buildScatterMap(scatterKey, totalChannels) : null;
         lsbExtractMainThread(data, numBytes, startBit, onProg, scatter, bpc, decCancelRef).then(resolve, reject);
@@ -818,7 +795,6 @@ function lsbExtractWorker(data, numBytes, startBit, onProg, scatterKey, bpc, tot
 
     dbg('Worker extract start — ' + fmtB(numBytes) + ', bpc=' + bpc + ', scatter=' + !!scatterKey);
 
-    // .slice() so the original data stays usable on the main thread
     var dataCopy = data.buffer.slice(0);
     worker.postMessage({
       type:          'extract',
@@ -832,15 +808,11 @@ function lsbExtractWorker(data, numBytes, startBit, onProg, scatterKey, bpc, tot
   });
 }
 
-/**
- * Fallback: embed on the main thread using setTimeout chunking.
- * Resolves with the modified data array (same reference, modified in-place).
- */
 function lsbEmbedMainThread(data, payload, onProg, scatter, bpc, cancelRef) {
   bpc = bpc || 1;
   return new Promise(function (resolve, reject) {
     var totalBits = payload.length * 8;
-    var CHUNK     = 600000;  // larger chunk = fewer setTimeout yields = faster overall
+    var CHUNK     = 600000;
     var bit       = 0;
     var startMs   = Date.now();
 
@@ -853,7 +825,6 @@ function lsbEmbedMainThread(data, payload, onProg, scatter, bpc, cancelRef) {
 
       var end = Math.min(bit + CHUNK, totalBits);
 
-      // Fast path: bpc=1, no scatter — skips division/modulo per bit
       if (bpc === 1 && !scatter) {
         for (var i = bit; i < end; i++) {
           var b  = (payload[i >> 3] >> (7 - (i & 7))) & 1;
@@ -881,9 +852,6 @@ function lsbEmbedMainThread(data, payload, onProg, scatter, bpc, cancelRef) {
   });
 }
 
-/**
- * Fallback: extract on the main thread using setTimeout chunking.
- */
 function lsbExtractMainThread(data, numBytes, startBit, onProg, scatter, bpc, cancelRef) {
   bpc = bpc || 1;
   return new Promise(function (resolve, reject) {
@@ -901,7 +869,6 @@ function lsbExtractMainThread(data, numBytes, startBit, onProg, scatter, bpc, ca
 
       var end = Math.min(bit + CHUNK, totalBits);
 
-      // Fast path: bpc=1, no scatter
       if (bpc === 1 && !scatter) {
         var abs = startBit + bit;
         for (var i = bit; i < end; i++, abs++) {
@@ -930,17 +897,9 @@ function lsbExtractMainThread(data, numBytes, startBit, onProg, scatter, bpc, ca
   });
 }
 
-// Convenience wrappers that pick Worker or fallback automatically
-
 var encCancelRef = { val: false };
 var decCancelRef = { val: false };
 
-/**
- * lsbEmbed resolves with Uint8ClampedArray (the modified pixel data).
- * Worker path: returns new array from transferred-and-returned buffer.
- * Main-thread path: returns the same data reference (modified in-place).
- * Caller should use: new ImageData(result, w, h) for putImageData.
- */
 function lsbEmbed(data, payload, onProg, scatterKey, bpc, totalChannels) {
   encCancelRef.val = false;
   if (USE_WORKER) {
@@ -959,16 +918,11 @@ function lsbExtract(data, numBytes, startBit, onProg, scatterKey, bpc, totalChan
   return lsbExtractMainThread(data, numBytes, startBit, onProg, scatter, bpc, decCancelRef);
 }
 
-// Cancel buttons — Worker path terminates the worker (handled there);
-// main-thread path checks cancelRef on each chunk.
 function cancelEncode() { encCancelRef.val = true; }
 function cancelDecode() { decCancelRef.val = true; }
 
 // ═══════════════════════════════════════════════════════════════
 // APNG HELPERS
-// Safe wrappers — check if apng.js functions exist before calling.
-// This prevents "detectAPNG is not defined" errors if apng.js fails
-// to load or is missing.
 // ═══════════════════════════════════════════════════════════════
 
 function _hasAPNG() {
@@ -986,7 +940,6 @@ function _isGIF(buffer) {
   if (typeof detectGIF === 'function') {
     try { return detectGIF(buffer); } catch (e) { return false; }
   }
-  // Inline fallback: check GIF signature
   var d = new Uint8Array(buffer, 0, 6);
   var sig = String.fromCharCode(d[0],d[1],d[2],d[3],d[4],d[5]);
   return sig === 'GIF87a' || sig === 'GIF89a';
@@ -994,13 +947,8 @@ function _isGIF(buffer) {
 
 // ═══════════════════════════════════════════════════════════════
 // SNIFF AHID MAGIC
-// Drop an encoded PNG on the encode zone → auto-switch to Decode tab.
 // ═══════════════════════════════════════════════════════════════
 
-/**
- * Returns a Promise<boolean> — true if the file contains an AHID header.
- * Only checks the first 4 bytes using 1-bit non-scattered LSB.
- */
 function sniffAHID(file) {
   return loadImageBitmap(file)
     .then(function (bmp) {
@@ -1010,7 +958,6 @@ function sniffAHID(file) {
       var ctx   = cv.getContext('2d');
       ctx.drawImage(bmp, 0, 0);
       var data  = ctx.getImageData(0, 0, cv.width, cv.height).data;
-      // Use main-thread extract for the 4-byte sniff (fast, no cancel needed)
       return lsbExtractMainThread(data, 4, 0, function () {}, null, 1, null);
     })
     .then(function (hdr) {
@@ -1042,7 +989,6 @@ function loadDecodeFile(f) {
 
 // ═══════════════════════════════════════════════════════════════
 // CAPACITY ANALYSIS
-// Runs 120 ms after any relevant setting changes (debounced).
 // ═══════════════════════════════════════════════════════════════
 
 var _capDebounce = null;
@@ -1060,16 +1006,33 @@ function _doAnalyse() {
   var rW  = Math.max(1, parseInt($('rW').value, 10) || gOrigW);
   var rH  = Math.max(1, parseInt($('rH').value, 10) || gOrigH);
   var bpc = getLsbDepth();
-  var cap = Math.floor(rW * rH * 3 * bpc / 8) - HEADER_BYTES;
 
-  $('newCap').textContent     = fmtB(cap);
-  $('estOutSize').textContent = 'approx ' + fmtB(Math.round(rW * rH * 3 * 0.82));
-  $('capRow').style.display   = 'flex';
+  // In multi-frame mode, capacity is effectively unlimited (many frames)
+  // Show per-frame capacity and total capacity based on original dimensions
+  var isMulti = $('multiFrameMode') && $('multiFrameMode').checked;
+
+  if (isMulti) {
+    // Multi-frame: use original image dims for per-frame capacity (always bpc=1, mono)
+    var mfCap = mfFrameCapacity(rW, rH);
+    $('newCap').textContent     = fmtB(mfCap) + '/frame (multi-frame, up to 500 frames = ' + fmtB(mfCap * 500) + ')';
+    $('estOutSize').textContent = 'depends on frame count';
+    $('capRow').style.display   = 'flex';
+  } else {
+    var cap = Math.floor(rW * rH * 3 * bpc / 8) - HEADER_BYTES;
+    $('newCap').textContent     = fmtB(cap);
+    $('estOutSize').textContent = 'approx ' + fmtB(Math.round(rW * rH * 3 * 0.82));
+    $('capRow').style.display   = 'flex';
+  }
 
   if (!gAudFile) {
     $('capFill').className   = 'cap-fill';
     $('capFill').style.width = '0%';
-    $('capVal').textContent  = 'img cap: ' + fmtB(cap);
+    if (!isMulti) {
+      var cap2 = Math.floor(rW * rH * 3 * bpc / 8) - HEADER_BYTES;
+      $('capVal').textContent  = 'img cap: ' + fmtB(cap2);
+    } else {
+      $('capVal').textContent  = 'waiting for audio…';
+    }
     $('badge').style.display = 'none';
     return;
   }
@@ -1078,8 +1041,84 @@ function _doAnalyse() {
 
   fileToArrayBuffer(gAudFile)
     .then(function (ab) { return getAudioDuration(ab); })
-    ['catch'](function ()  { return (gAudFile.size * 8) / 128000; }) // rough fallback
-    .then(function (dur)   { _renderCapacityBadge(dur, cap, bpc); });
+    ['catch'](function ()  { return (gAudFile.size * 8) / 128000; })
+    .then(function (dur)   {
+      if (isMulti) {
+        _renderCapacityBadgeMF(dur, rW, rH);
+      } else {
+        var cap3 = Math.floor(rW * rH * 3 * bpc / 8) - HEADER_BYTES;
+        _renderCapacityBadge(dur, cap3, bpc);
+      }
+    });
+}
+
+/** Capacity badge for multi-frame mode */
+function _renderCapacityBadgeMF(dur, rW, rH) {
+  stHide('encStatus');
+  var badge     = $('badge');
+  var manualSpd = getManualSpeed();
+  var SR        = getOutSR();
+
+  // Multi-frame always uses mono, bpc=1
+  var mfCap  = mfFrameCapacity(rW, rH);
+  var speed  = manualSpd || 1.0;
+
+  // Estimate WAV size in mono
+  var wavSz  = Math.ceil((dur / speed) * SR) * 2 + 44;
+  var payloadSz = wavSz + HEADER_BYTES;
+  var numFrames = Math.ceil(payloadSz / mfCap);
+
+  if (manualSpd === null) {
+    // Auto: try speeds to minimize frames, prefer 1.0x if reasonable
+    speed = 1.0;
+    for (var si = 0; si < SPEEDS.length; si++) {
+      var testWav = Math.ceil((dur / SPEEDS[si]) * SR) * 2 + 44;
+      var testPay = testWav + HEADER_BYTES;
+      var testFrames = Math.ceil(testPay / mfCap);
+      if (testFrames <= 500) {
+        speed = SPEEDS[si];
+        wavSz = testWav;
+        payloadSz = testPay;
+        numFrames = testFrames;
+        break;
+      }
+    }
+  } else {
+    speed = manualSpd;
+    wavSz  = Math.ceil((dur / speed) * SR) * 2 + 44;
+    payloadSz = wavSz + HEADER_BYTES;
+    numFrames = Math.ceil(payloadSz / mfCap);
+  }
+
+  if (numFrames > 500) {
+    _showCapOver(mfCap);
+    badge.className = 'badge red'; badge.style.display = 'block';
+    badge.innerHTML = '<b>Too many frames needed: ' + numFrames + ' (max 500).</b><br>'
+      + 'Payload: ' + fmtB(payloadSz) + ', ' + fmtB(mfCap) + '/frame.<br>'
+      + 'Increase speed, lower sample rate, or enlarge image.';
+    $('encBtn').disabled = true;
+    return;
+  }
+
+  gSpeed = speed; gAudDurSec = dur;
+
+  var pctPerFrame = Math.min(99, (1 / numFrames) * 100);
+  _showCapBar(Math.min(99, payloadSz / (mfCap * numFrames) * 100),
+    fmtB(payloadSz) + ' across ' + numFrames + ' frames');
+
+  if (speed <= 1.01) {
+    badge.className = 'badge green'; badge.style.display = 'block';
+    badge.innerHTML = 'Fits at 1.0x in <b>' + numFrames + ' frames</b> — no pitch change.<br>'
+      + 'Payload: ' + fmtB(payloadSz) + ', ' + fmtB(mfCap) + '/frame.';
+  } else {
+    var semitones = (12 * Math.log2(speed)).toFixed(1);
+    var sign      = semitones >= 0 ? '+' : '';
+    badge.className = 'badge'; badge.style.display = 'block';
+    badge.innerHTML = 'Speed: <b>' + speed.toFixed(2) + 'x</b> (' + sign + semitones + ' sem) — <b>' + numFrames + ' frames</b><br>'
+      + fmtT(dur * 1000) + ' → ' + fmtT(dur / speed * 1000) + ' — '
+      + fmtB(payloadSz) + ', ' + fmtB(mfCap) + '/frame.';
+  }
+  $('encBtn').disabled = false;
 }
 
 /** Update the capacity bar and fit badge after audio duration is known. */
@@ -1090,7 +1129,6 @@ function _renderCapacityBadge(dur, cap, bpc) {
   var SR        = getOutSR();
   var channels  = getChannels();
 
-  // ── Manual speed ────────────────────────────────────────────
   if (manualSpd !== null) {
     var wavSz     = wavEst(dur, manualSpd, SR, channels);
     var pct       = Math.min(99, wavSz / cap * 100);
@@ -1121,7 +1159,6 @@ function _renderCapacityBadge(dur, cap, bpc) {
     return;
   }
 
-  // ── Auto speed ──────────────────────────────────────────────
   var speed = pickSpeed(dur, cap);
 
   if (!speed) {
@@ -1175,49 +1212,41 @@ function _showCapOver(cap) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// MULTI-FRAME  (Animated PNG steganography)
-//
-// Audio payload is split across APNG frames sequentially.
-// Frame 0 contains the AHID header + start of audio bytes.
-// Frame N continues from where frame N-1 left off.
-// GIF input: each GIF frame becomes one APNG frame (with its own
-//            audio chunk hidden inside its pixels).
-// Static image: the same image repeats across all frames.
-//
-// Rules for multi-frame mode:
-//   - Always bpc=1, no scatter (simplifies cross-frame sync)
-//   - Output is always .apng.png (viewable as still in old browsers)
-//   - Per-frame capacity = floor(W * H * 3 / 8) bytes
-//   - Number of frames = ceil(payload.length / perFrameCapacity)
+// MULTI-FRAME
 // ═══════════════════════════════════════════════════════════════
 
-/**
- * Returns how many bytes of payload one frame of dimensions W×H can carry
- * in 1-bit mode (always used for multi-frame to keep cross-frame decoding simple).
- */
 function mfFrameCapacity(w, h) {
   return Math.floor(w * h * 3 / 8);
 }
 
 /**
  * Encode audio into an animated APNG with audio spread across frames.
- * sourceFrames — array of {rgba: Uint8ClampedArray, delayMs} from GIF parser, or null for static
- * sourceImg   — the loaded bitmap for static images (drawn on each frame)
- * rW, rH      — output dimensions
- * payload     — full Uint8Array (AHID header + WAV bytes)
- * delayMs     — per-frame delay
- * baseName    — base filename for download
+ *
+ * KEY CHANGE: Uses the original frame dimensions (not resize) for per-frame
+ * capacity. This ensures the payload is actually split across multiple frames
+ * instead of fitting in one giant upscaled frame.
+ *
+ * frameW, frameH — the actual pixel dimensions of each output frame
+ * sourceFrames   — array of {rgba, delayMs} from GIF, or null for static
+ * sourceImg      — loaded bitmap for static images
+ * payload        — full Uint8Array (AHID header + WAV)
+ * delayMs        — per-frame delay
+ * baseName       — filename base
  */
-function doEncodeMultiFrame(sourceFrames, sourceImg, rW, rH, payload, delayMs, baseName) {
+function doEncodeMultiFrame(sourceFrames, sourceImg, frameW, frameH, payload, delayMs, baseName) {
   if (!_hasAPNG()) {
     return Promise.reject(new Error('APNG support not available — apng.js not loaded.'));
   }
 
-  var cap       = mfFrameCapacity(rW, rH);
+  var cap       = mfFrameCapacity(frameW, frameH);
   var numFrames = Math.ceil(payload.length / cap);
   var btn       = $('encBtn');
 
-  dbg('Multi-frame encode: ' + numFrames + ' frames, ' + fmtB(payload.length) + ' payload, ' + fmtB(cap) + '/frame');
+  dbg('Multi-frame encode: ' + numFrames + ' frames, ' + fmtB(payload.length) + ' payload, ' + fmtB(cap) + '/frame, ' + frameW + 'x' + frameH);
+
+  if (numFrames < 2) {
+    dbg('Warning: only 1 frame needed — this is normal for small audio + large image.');
+  }
 
   if (numFrames > 500) {
     st('encStatus', 'err', 'Audio too long for this image size — needs ' + numFrames + ' frames (max 500). Enlarge image or increase speed.');
@@ -1226,9 +1255,8 @@ function doEncodeMultiFrame(sourceFrames, sourceImg, rW, rH, payload, delayMs, b
   }
 
   prog('encFill', 'encLbl', 'encPct', 10, 'Encoding frames…');
-  st('encStatus', 'info', 'Encoding ' + numFrames + ' frames…');
+  st('encStatus', 'info', 'Encoding ' + numFrames + ' frames (' + frameW + '×' + frameH + ')…');
 
-  // Build array of encode promises (run sequentially below)
   var resultFrames = new Array(numFrames);
   var chain = Promise.resolve();
 
@@ -1241,14 +1269,15 @@ function doEncodeMultiFrame(sourceFrames, sourceImg, rW, rH, payload, delayMs, b
 
         var baseRGBA;
         if (sourceFrames && sourceFrames.length > 0) {
-          // GIF input: use frame f (cycle if fewer GIF frames than needed)
-          baseRGBA = new Uint8ClampedArray(sourceFrames[frameIdx % sourceFrames.length].rgba);
+          // GIF input: cycle frames if more audio frames than GIF frames
+          var srcFrame = sourceFrames[frameIdx % sourceFrames.length];
+          baseRGBA = new Uint8ClampedArray(srcFrame.rgba);
         } else {
-          // Static image: draw onto fresh canvas
+          // Static image: draw onto canvas at frame dimensions
           var cv2  = document.createElement('canvas');
-          cv2.width = rW; cv2.height = rH;
-          cv2.getContext('2d').drawImage(sourceImg, 0, 0, rW, rH);
-          baseRGBA = new Uint8ClampedArray(cv2.getContext('2d').getImageData(0, 0, rW, rH).data);
+          cv2.width = frameW; cv2.height = frameH;
+          cv2.getContext('2d').drawImage(sourceImg, 0, 0, frameW, frameH);
+          baseRGBA = new Uint8ClampedArray(cv2.getContext('2d').getImageData(0, 0, frameW, frameH).data);
         }
 
         return lsbEmbedMainThread(baseRGBA, chunk, function () {}, null, 1, null)
@@ -1265,9 +1294,9 @@ function doEncodeMultiFrame(sourceFrames, sourceImg, rW, rH, payload, delayMs, b
   return chain
     .then(function () {
       prog('encFill', 'encLbl', 'encPct', 87, 'Building APNG…');
-      st('encStatus', 'info', 'Building animated PNG…');
-      dbg('All frames encoded, building APNG…');
-      return encodeAPNG(resultFrames, rW, rH, delayMs);
+      st('encStatus', 'info', 'Building animated PNG (' + numFrames + ' frames)…');
+      dbg('All ' + numFrames + ' frames encoded, building APNG…');
+      return encodeAPNG(resultFrames, frameW, frameH, delayMs);
     })
     .then(function (apngBytes) {
       prog('encFill', 'encLbl', 'encPct', 98, 'Saving…');
@@ -1280,12 +1309,10 @@ function doEncodeMultiFrame(sourceFrames, sourceImg, rW, rH, payload, delayMs, b
 
 /**
  * Decode audio from a multi-frame APNG.
- * Called from doDecode() when an APNG is detected.
- * buffer — ArrayBuffer of the APNG file
  */
 function doDecodeMultiFrame(buffer) {
   if (!_hasAPNG()) {
-    return Promise.reject(new Error('APNG support not available — apng.js not loaded.'));
+    return Promise.reject(new Error('APNG support not available �� apng.js not loaded.'));
   }
 
   prog('decFill', 'decLbl', 'decPct', 5, 'Parsing APNG frames…');
@@ -1303,12 +1330,10 @@ function doDecodeMultiFrame(buffer) {
 
     prog('decFill', 'decLbl', 'decPct', 15, 'Reading frame 1 / ' + frames.length + '…');
 
-    // Step 1: Extract header bytes from frame 0 (always bpc=1, no scatter)
     return lsbExtractMainThread(frames[0], HEADER_BYTES, 0, function () {}, null, 1, null)
       .then(function (hdrBytes) {
         var hv = new DataView(hdrBytes.buffer);
 
-        // Validate AHID magic
         for (var i = 0; i < 4; i++) {
           if (hdrBytes[i] !== MAGIC[i]) throw new Error('NOAHID');
         }
@@ -1321,14 +1346,10 @@ function doDecodeMultiFrame(buffer) {
         var speed     = speedX1k / 1000;
 
         if (dataLen === 0 || dataLen > 400 * 1024 * 1024) throw new Error('BADHDR');
-        if (bpc !== 1) {
-          dbg('Warning: APNG was encoded with bpc=' + bpc + ', decoding with bpc=1 (multi-frame uses bpc=1)');
-        }
 
         dbg('Header: dataLen=' + fmtB(dataLen) + ', speed=' + speed.toFixed(2) + 'x, bpc=' + bpc);
         st('decStatus', 'info', 'Found ' + frames.length + '-frame APNG, extracting ' + fmtB(dataLen) + '…');
 
-        // Step 2: Extract audio bytes from all frames sequentially
         var totalNeeded = HEADER_BYTES + dataLen;
         var allChunks   = [];
         var accumulated = 0;
@@ -1351,13 +1372,11 @@ function doDecodeMultiFrame(buffer) {
         }
 
         return extractChain.then(function () {
-          // Concatenate all frame chunks, skip the header bytes (already parsed)
           var totalExtracted = allChunks.reduce(function (s, c) { return s + c.length; }, 0);
           var flat = new Uint8Array(totalExtracted);
           var off  = 0;
           allChunks.forEach(function (c) { flat.set(c, off); off += c.length; });
 
-          // Audio bytes start after HEADER_BYTES in the flat stream
           var audioBytes = flat.subarray(HEADER_BYTES, HEADER_BYTES + dataLen);
 
           return {
@@ -1385,7 +1404,6 @@ function doEncode() {
     return;
   }
 
-  // Branch: multi-frame APNG mode uses a different flow
   var multiFrame = $('multiFrameMode') && $('multiFrameMode').checked;
   if (multiFrame) { doEncodeMultiFrameStart(); return; }
 
@@ -1393,7 +1411,7 @@ function doEncode() {
   btn.disabled = true;
   stHide('encStatus');
   $('encProg').style.display = 'block';
-  setCancelVisible('cancelEncBtn', !USE_WORKER); // cancel only usable in main-thread mode
+  setCancelVisible('cancelEncBtn', !USE_WORKER);
   var iosNote = $('iosNote'); if (iosNote) iosNote.style.display = 'none';
 
   var bmp, rW, rH, cv, ctx, bpc, payload, scatterKey, channels;
@@ -1411,7 +1429,6 @@ function doEncode() {
       ctx = cv.getContext('2d');
       ctx.drawImage(bmp, 0, 0, rW, rH);
 
-      // Optional JPEG pre-compression pass
       if ($('compressEnabled').checked) {
         var quality = Math.max(0.01, Math.min(1.0, (parseInt($('compressQuality').value, 10) || 75) / 100));
         st('encStatus', 'info', 'Pre-compressing at quality ' + Math.round(quality * 100) + '%…');
@@ -1454,7 +1471,6 @@ function doEncode() {
         ? 'Scatter-encoding (passkey active)…'
         : 'Encoding into pixels (' + bpc + '-bit, ' + (channels === 2 ? 'stereo' : 'mono') + ')…');
 
-      // Get pixel data FRESH right before encoding — this is the data we'll modify
       var pixelData = ctx.getImageData(0, 0, rW, rH).data;
 
       var encStart = Date.now();
@@ -1471,7 +1487,6 @@ function doEncode() {
     .then(function (modifiedPixels) {
       prog('encFill', 'encLbl', 'encPct', 93, 'Saving PNG…');
 
-      // Validate that modifiedPixels has data
       if (!modifiedPixels || modifiedPixels.length === 0) {
         throw new Error('Encoding produced empty pixel data. Please try again.');
       }
@@ -1513,9 +1528,15 @@ function doEncode() {
 }
 
 /**
- * Entry point for multi-frame APNG encode.
- * Handles GIF input (parse frames) or static image (repeat).
- * Then calls doEncodeMultiFrame() with the prepared frame data.
+ * Multi-frame APNG encode entry point.
+ *
+ * KEY FIX: For GIF input, use the ORIGINAL GIF frame dimensions (not the
+ * resize dimensions). This ensures the audio payload is split across the
+ * actual number of GIF frames (e.g. 245 frames) rather than squeezed into
+ * 1 giant upscaled frame.
+ *
+ * For static images, the resize dimensions are used (since there's only
+ * one source frame, we replicate it at the chosen size).
  */
 function doEncodeMultiFrameStart() {
   var btn = $('encBtn');
@@ -1534,10 +1555,9 @@ function doEncodeMultiFrameStart() {
   st('encStatus', 'info', 'Processing audio…');
 
   fileToArrayBuffer(gAudFile)
-    .then(function (ab) { return processAudio(ab, gSpeed); })
+    .then(function (ab) { return processAudioMF(ab, gSpeed); })
     .then(function (r) {
       prog('encFill', 'encLbl', 'encPct', 20, 'Building payload…');
-      // Multi-frame always uses bpc=1, 1=mono (scatter not supported — cross-frame sync)
       var payload = buildPayload(r.wav, Math.round(gSpeed * 1000), r.origDurMs, 1, 1);
       dbg('Multi-frame payload: ' + fmtB(payload.length) + ', speed=' + gSpeed.toFixed(2) + 'x');
 
@@ -1550,29 +1570,44 @@ function doEncodeMultiFrameStart() {
         return fileToArrayBuffer(gImgFile).then(function (gifBuf) {
           var gifData = parseGIF(gifBuf);
           dbg('GIF: ' + gifData.frames.length + ' frames, ' + gifData.width + 'x' + gifData.height);
-          // Scale GIF frames to target dimensions if needed
-          var scaledFrames;
-          if (gifData.width === rW && gifData.height === rH) {
-            scaledFrames = gifData.frames;
-          } else {
-            // Scale each frame via canvas
-            scaledFrames = gifData.frames.map(function (f) {
+
+          // Use ORIGINAL GIF dimensions for frame encoding —
+          // this is what makes multi-frame actually produce multiple frames
+          var frameW = gifData.width;
+          var frameH = gifData.height;
+
+          // Check if user wants to resize — only resize if explicitly changed
+          // from the original GIF dimensions
+          if (rW !== gOrigW || rH !== gOrigH) {
+            // User explicitly resized — use their dimensions
+            frameW = rW;
+            frameH = rH;
+            dbg('User resized to ' + frameW + 'x' + frameH + ' — using for multi-frame');
+
+            // Scale GIF frames to target size
+            var scaledFrames = gifData.frames.map(function (f) {
               var cv2 = document.createElement('canvas');
-              cv2.width = rW; cv2.height = rH;
+              cv2.width = frameW; cv2.height = frameH;
               var ctx2 = cv2.getContext('2d');
               var tmpCv = document.createElement('canvas');
               tmpCv.width = gifData.width; tmpCv.height = gifData.height;
-              var tmpCtx = tmpCv.getContext('2d');
-              tmpCtx.putImageData(new ImageData(f.rgba, gifData.width, gifData.height), 0, 0);
-              ctx2.drawImage(tmpCv, 0, 0, rW, rH);
-              return { rgba: new Uint8ClampedArray(ctx2.getImageData(0, 0, rW, rH).data), delayMs: f.delayMs };
+              tmpCv.getContext('2d').putImageData(
+                new ImageData(new Uint8ClampedArray(f.rgba), gifData.width, gifData.height), 0, 0);
+              ctx2.drawImage(tmpCv, 0, 0, frameW, frameH);
+              return {
+                rgba: new Uint8ClampedArray(ctx2.getImageData(0, 0, frameW, frameH).data),
+                delayMs: f.delayMs
+              };
             });
-            dbg('GIF frames scaled to ' + rW + 'x' + rH);
+            return doEncodeMultiFrame(scaledFrames, null, frameW, frameH, payload, delayMs, baseName);
           }
-          return doEncodeMultiFrame(scaledFrames, null, rW, rH, payload, delayMs, baseName);
+
+          // No resize — use original GIF frame data directly
+          return doEncodeMultiFrame(gifData.frames, null, frameW, frameH, payload,
+            gifData.frames[0].delayMs || delayMs, baseName);
         });
       } else {
-        // Static image — load as bitmap, pass as sourceImg
+        // Static image: use resize dimensions, replicate across frames
         return loadImageBitmap(gImgFile).then(function (bmp) {
           return doEncodeMultiFrame(null, bmp, rW, rH, payload, delayMs, baseName);
         });
@@ -1610,10 +1645,8 @@ function doDecode() {
   st('decStatus', 'info', 'Loading…');
   dbg('Decode start: ' + gDecFile.name + ' (' + fmtB(gDecFile.size) + ')');
 
-  // Read the full file buffer first — needed to detect APNG before drawing to canvas
   fileToArrayBuffer(gDecFile)
     .then(function (buf) {
-      // Only try multi-frame decode if apng.js is loaded AND file is animated APNG
       if (_isAPNG(buf)) {
         dbg('Detected animated APNG — multi-frame decode');
         return doDecodeMultiFrame(buf).then(function (r) {
@@ -1641,10 +1674,6 @@ function doDecode() {
     });
 }
 
-/**
- * Single-frame decode (existing PNG/BMP path).
- * Accepts the already-read ArrayBuffer so we don't re-read the file.
- */
 function doDecodeSingleFrame(buf) {
   var btn = $('decBtn');
   var speed, bpc, channels, scatterKey;
@@ -1665,19 +1694,14 @@ function doDecodeSingleFrame(buf) {
       prog('decFill', 'decLbl', 'decPct', 5, 'Reading header…');
       setCancelVisible('cancelDecBtn', !USE_WORKER);
 
-      // First read header with no scatter, bpc=1 to check magic
       return lsbExtractMainThread(data, HEADER_BYTES, 0, function () {}, null, 1, null)
         .then(function (hdrBytes) {
-          var hv = new DataView(hdrBytes.buffer);
-
-          // Check magic — if it fails and scatter key is set, try with scatter
           var magicOk = true;
           for (var i = 0; i < 4; i++) {
             if (hdrBytes[i] !== MAGIC[i]) { magicOk = false; break; }
           }
 
           if (!magicOk && scatterKey) {
-            // Try reading header with scatter enabled
             dbg('Magic not found without scatter, trying with passkey…');
             var scatter = buildScatterMap(scatterKey, totalCh);
             return lsbExtractMainThread(data, HEADER_BYTES, 0, function () {}, scatter, 1, null)
@@ -1727,10 +1751,6 @@ function doDecodeSingleFrame(buf) {
     });
 }
 
-/**
- * Shared finish step: shows info card, pitch-corrects if needed, starts audio player.
- * numFrames — 1 for single-frame, N for multi-frame APNG.
- */
 function finishDecode(audioBytes, dataLen, origDurMs, encDurMs, speed, bpc, channels, numFrames) {
   var btn = $('decBtn');
   $('iSize').textContent    = fmtB(dataLen) + (numFrames > 1 ? ' (' + numFrames + ' frames)' : '');
@@ -1851,9 +1871,6 @@ function applySuggestedSize(w, h) {
 // ═══════════════════════════════════════════════════════════════
 
 setupDrop('imgDrop', 'imgInput', function (f) {
-  // Reject non-PNG/BMP immediately before doing anything else
-  // Allow PNG, BMP, and GIF. GIF: canvas captures first frame, output is always PNG.
-  // JPEG is rejected — its lossy compression destroys LSB data.
   var ok = (f.type === 'image/png' || f.type === 'image/bmp' || f.type === 'image/gif' ||
             /\.(png|bmp|gif)$/i.test(f.name));
   if (!ok) {
@@ -1863,7 +1880,6 @@ setupDrop('imgDrop', 'imgInput', function (f) {
     return;
   }
 
-  // Auto-route: if the PNG already contains AudioHide data, switch to Decode
   sniffAHID(f).then(function (isEncoded) {
     if (isEncoded) {
       switchTab('dec');
@@ -1872,7 +1888,6 @@ setupDrop('imgDrop', 'imgInput', function (f) {
       return;
     }
 
-    // Otherwise treat it as a carrier for encoding
     gImgFile = f;
     $('imgFileLbl').textContent  = f.name + ' — ' + fmtB(f.size);
     var p = $('imgPrev');
@@ -1891,7 +1906,7 @@ setupDrop('imgDrop', 'imgInput', function (f) {
       $('rH').value               = gOrigH;
       $('rScale').value           = 100;
       $('origDims').textContent   = gOrigW + ' × ' + gOrigH + ' px'
-        + (f.type === 'image/gif' ? ' (GIF — first frame only, output is PNG)' : '');
+        + (f.type === 'image/gif' ? ' (GIF — first frame only for single PNG, all frames for APNG mode)' : '');
       $('newCap').textContent     = fmtB(pixelCap(gOrigW, gOrigH));
       $('estOutSize').textContent = 'approx ' + fmtB(Math.round(gOrigW * gOrigH * 3 * 0.82));
       $('resizeWrap').style.display = 'block';
@@ -1918,11 +1933,9 @@ setupDrop('decDrop', 'decInput', function (f) {
 // ═══════════════════════════════════════════════════════════════
 
 (function init() {
-  // Show version number in footer
   var vd = $('versionDisplay');
   if (vd) vd.textContent = VERSION;
 
-  // Log environment info so debug panel is immediately useful
   dbg('AudioHide v' + VERSION);
   dbg('UA: ' + navigator.userAgent);
   dbg('Protocol: ' + window.location.protocol);
@@ -1936,7 +1949,6 @@ setupDrop('decDrop', 'decInput', function (f) {
   dbg('DecompressionStream: ' + (typeof DecompressionStream !== 'undefined' ? 'yes' : 'NO (APNG decode not available)'));
   dbg('apng.js loaded: ' + _hasAPNG());
 
-  // Warn if Web Audio is missing (very old browser)
   if (!AudioCtx) {
     var warn = $('compatWarn');
     if (warn) {
@@ -1945,7 +1957,6 @@ setupDrop('decDrop', 'decInput', function (f) {
     }
   }
 
-  // Note when running in file:// mode (Workers disabled)
   if (!USE_WORKER && window.location.protocol === 'file:') {
     var warn2 = $('compatWarn');
     if (warn2) {
@@ -1954,13 +1965,11 @@ setupDrop('decDrop', 'decInput', function (f) {
     }
   }
 
-  // Mobile: change drop zone text to "Tap to select"
   if (IS_MOBILE) {
     var hints = document.querySelectorAll('.dz-hint');
     for (var i = 0; i < hints.length; i++) hints[i].textContent = 'Tap to select a file';
   }
 
-  // Apply saved or system theme
   applyTheme(getCurrentTheme());
 }());
 
@@ -1975,7 +1984,6 @@ function toggleDebug() {
 }
 
 function refreshDebugPanel() {
-  // Static environment info
   var workerStatus;
   if (typeof Worker === 'undefined')             workerStatus = 'NO';
   else if (window.location.protocol === 'file:') workerStatus = 'Disabled (file:// — serve over http)';
@@ -1993,7 +2001,6 @@ function refreshDebugPanel() {
   $('dbgCompress').textContent = (typeof CompressionStream   !== 'undefined') ? 'OK (native)' : 'NO (zlib STORE fallback — larger files)';
   $('dbgDecompress').textContent = (typeof DecompressionStream !== 'undefined') ? 'OK (native)' : 'NO — multi-frame decode will fail';
 
-  // Live log
   var el = $('debugLog');
   if (el) el.textContent = gDebugLog.length ? gDebugLog.join('\n') : '(no events yet)';
 }
@@ -2021,7 +2028,6 @@ function copyDebugInfo() {
       setTimeout(function () { $('copyDebugBtn').textContent = 'Copy to clipboard'; }, 2000);
     });
   } else {
-    // Fallback for old browsers / iOS
     var ta = document.createElement('textarea');
     ta.value = text;
     ta.style.position = 'fixed';
