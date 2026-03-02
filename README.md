@@ -1,4 +1,4 @@
-# AudioHide 1.0.28
+# AudioHide 1.0.29
 
 Hide a song inside a PNG image using LSB (Least Significant Bit) steganography.  
 Runs entirely in your browser — no server, no file uploads, no tracking.
