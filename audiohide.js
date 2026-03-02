@@ -41,7 +41,7 @@
 // VERSION & CONSTANTS
 // ═══════════════════════════════════════════════════════════════
 
-var VERSION = '1.1.0';
+var VERSION = '1.0.17';
 
 /** Magic bytes at the start of every AudioHide payload. */
 var MAGIC = [0x41, 0x48, 0x49, 0x44]; // "AHID"
