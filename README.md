@@ -5,6 +5,12 @@ Runs entirely in your browser — no server, no file uploads, no tracking.
 
 also a open source so feel free to use no credit needed
 
+## What it does
+
+AudioHide lets you embed an audio file (MP3, WAV, FLAC, etc.) into a PNG image.  
+The resulting image looks identical to the original but contains the full song hidden in the pixel data.  
+Anyone with the tool can extract the audio back out — or no one can, if you use a passkey.
+
 ## Live tool
 
 **[Open AudioHide](https://kuro123ri.github.io/audiohide/)** <-- click this ;P
@@ -13,11 +19,6 @@ also a open source so feel free to use no credit needed
 ![use](https://github.com/user-attachments/assets/399af6b6-8c37-452e-b3c0-d1f800b02c0e)
 
 ---
-## What it does
-
-AudioHide lets you embed an audio file (MP3, WAV, FLAC, etc.) into a PNG image.  
-The resulting image looks identical to the original but contains the full song hidden in the pixel data.  
-Anyone with the tool can extract the audio back out — or no one can, if you use a passkey.
 
 ## How to use
 
