@@ -1694,58 +1694,111 @@ function doDecodeSingleFrame(buf) {
       prog('decFill', 'decLbl', 'decPct', 5, 'Reading header…');
       setCancelVisible('cancelDecBtn', !USE_WORKER);
 
-      return lsbExtractMainThread(data, HEADER_BYTES, 0, function () {}, null, 1, null)
-        .then(function (hdrBytes) {
-          var magicOk = true;
-          for (var i = 0; i < 4; i++) {
-            if (hdrBytes[i] !== MAGIC[i]) { magicOk = false; break; }
-          }
+      /**
+       * Try all combinations of bpc (1, 2) and scatter (off, on) to find valid header.
+       * Order: bpc=1 plain → bpc=2 plain → bpc=1 scatter → bpc=2 scatter
+       * This auto-detects the encoding mode without requiring the user to set it.
+       */
+      var attempts = [
+        { bpc: 1, scatter: null,       label: 'bpc=1, no scatter' },
+        { bpc: 2, scatter: null,       label: 'bpc=2, no scatter' }
+      ];
+      if (scatterKey) {
+        attempts.push({ bpc: 1, scatter: scatterKey, label: 'bpc=1, scatter' });
+        attempts.push({ bpc: 2, scatter: scatterKey, label: 'bpc=2, scatter' });
+      }
 
-          if (!magicOk && scatterKey) {
-            dbg('Magic not found without scatter, trying with passkey…');
-            var scatter = buildScatterMap(scatterKey, totalCh);
-            return lsbExtractMainThread(data, HEADER_BYTES, 0, function () {}, scatter, 1, null)
-              .then(function (hdrBytes2) {
-                for (var i = 0; i < 4; i++) {
-                  if (hdrBytes2[i] !== MAGIC[i]) throw new Error('NOAHID');
-                }
-                return { hdrBytes: hdrBytes2, useScatter: true };
-              });
-          }
+      var attemptIdx = 0;
 
-          if (!magicOk) throw new Error('NOAHID');
-          return { hdrBytes: hdrBytes, useScatter: false };
-        })
-        .then(function (result) {
-          var hdrBytes = result.hdrBytes;
-          var useScatter = result.useScatter;
-          var hv = new DataView(hdrBytes.buffer);
+      function tryNextAttempt() {
+        if (attemptIdx >= attempts.length) {
+          throw new Error('NOAHID');
+        }
 
-          var dataLen   = hv.getUint32(4,  false);
-          var speedX1k  = hv.getUint32(8,  false);
-          var origDurMs = hv.getUint32(12, false);
-          bpc      = hv.getUint8(16) || 1;
-          channels = hv.getUint8(17) || 1;
-          speed    = speedX1k / 1000;
-          var encDurMs = Math.round(origDurMs / speed);
+        var att = attempts[attemptIdx];
+        attemptIdx++;
 
-          if (dataLen === 0 || dataLen > 400 * 1024 * 1024) throw new Error('BADHDR');
+        var scatterMap = att.scatter ? buildScatterMap(att.scatter, totalCh) : null;
 
-          dbg('Header: dataLen=' + fmtB(dataLen) + ', speed=' + speed.toFixed(2) + 'x, bpc=' + bpc + ', ch=' + channels + ', scatter=' + useScatter);
+        return lsbExtractMainThread(data, HEADER_BYTES, 0, function () {}, scatterMap, att.bpc, null)
+          .then(function (hdrBytes) {
+            // Check AHID magic
+            for (var i = 0; i < 4; i++) {
+              if (hdrBytes[i] !== MAGIC[i]) {
+                dbg('Header attempt ' + att.label + ' — magic mismatch');
+                return tryNextAttempt();
+              }
+            }
 
-          st('decStatus', 'info', 'Extracting ' + fmtB(dataLen) + '…');
+            var hv = new DataView(hdrBytes.buffer);
+            var dataLen   = hv.getUint32(4,  false);
+            var speedX1k  = hv.getUint32(8,  false);
+            var origDurMs = hv.getUint32(12, false);
+            var hdrBpc    = hv.getUint8(16) || 1;
+            var hdrCh     = hv.getUint8(17) || 1;
+            var spd       = speedX1k / 1000;
+
+            // Sanity check header values — reject if they look corrupt
+            if (dataLen === 0 || dataLen > 400 * 1024 * 1024) {
+              dbg('Header attempt ' + att.label + ' — bad dataLen: ' + dataLen);
+              return tryNextAttempt();
+            }
+            if (speedX1k === 0 || speedX1k > 10000) {
+              dbg('Header attempt ' + att.label + ' — bad speed: ' + speedX1k);
+              return tryNextAttempt();
+            }
+            if (hdrBpc !== 1 && hdrBpc !== 2) {
+              dbg('Header attempt ' + att.label + ' — bad bpc: ' + hdrBpc);
+              return tryNextAttempt();
+            }
+            if (hdrCh !== 1 && hdrCh !== 2) {
+              dbg('Header attempt ' + att.label + ' — bad channels: ' + hdrCh);
+              return tryNextAttempt();
+            }
+
+            // Check that payload fits in image
+            var maxCap = Math.floor(totalCh * att.bpc / 8);
+            if (dataLen + HEADER_BYTES > maxCap) {
+              dbg('Header attempt ' + att.label + ' — dataLen exceeds capacity');
+              return tryNextAttempt();
+            }
+
+            dbg('Header found via ' + att.label + ': dataLen=' + fmtB(dataLen) +
+                ', speed=' + spd.toFixed(2) + 'x, bpc=' + hdrBpc + ', ch=' + hdrCh);
+
+            return {
+              dataLen:   dataLen,
+              speed:     spd,
+              origDurMs: origDurMs,
+              encDurMs:  Math.round(origDurMs / spd),
+              bpc:       att.bpc,       // use the bpc we successfully decoded with
+              channels:  hdrCh,
+              useScatter: !!att.scatter
+            };
+          });
+      }
+
+      return tryNextAttempt()
+        .then(function (hdr) {
+          bpc      = hdr.bpc;
+          channels = hdr.channels;
+          speed    = hdr.speed;
+
+          st('decStatus', 'info', 'Extracting ' + fmtB(hdr.dataLen) + ' (' + bpc + '-bit mode)…');
           prog('decFill', 'decLbl', 'decPct', 10, 'Extracting bits…');
 
-          var extractScatter = useScatter ? scatterKey : null;
+          var extractScatter = hdr.useScatter ? scatterKey : null;
           var decStart = Date.now();
-          return lsbExtract(data, dataLen, HEADER_BYTES * 8, function (p) {
+
+          return lsbExtract(data, hdr.dataLen, HEADER_BYTES * 8, function (p) {
             var pct = 10 + p * 75;
             var eta = p > 0.03 && p < 0.97
               ? ' (~' + fmtEta(((Date.now() - decStart) / p) * (1 - p)) + ')' : '';
             prog('decFill', 'decLbl', 'decPct', pct, 'Extracting ' + Math.round(pct) + '%' + eta);
           }, extractScatter, bpc, totalCh)
           .then(function (audioBytes) {
-            return finishDecode(audioBytes, dataLen, origDurMs, encDurMs, speed, bpc, channels, 1);
+            return finishDecode(audioBytes, hdr.dataLen, hdr.origDurMs, hdr.encDurMs,
+                                speed, bpc, channels, 1);
           });
         });
     });
