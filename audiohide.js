@@ -41,7 +41,7 @@
 // VERSION & CONSTANTS
 // ═══════════════════════════════════════════════════════════════
 
-var VERSION = '1.0.19';
+var VERSION = '1.0.28';
 
 /** Magic bytes at the start of every AudioHide payload. */
 var MAGIC = [0x41, 0x48, 0x49, 0x44]; // "AHID"
@@ -366,6 +366,16 @@ function onPasskeyToggle() {
   var on = $('passkeyEnabled').checked;
   $('passkeyRow').style.display    = on ? 'block' : 'none';
   $('decPasskeyRow').style.display = on ? 'block' : 'none';
+}
+
+function onMultiFrameToggle() {
+  var on = $('multiFrameMode') && $('multiFrameMode').checked;
+  var opts = $('mfOptions');
+  if (opts) opts.style.display = on ? 'block' : 'none';
+  // Update encode button label
+  var btn = $('encBtn');
+  if (btn) btn.textContent = on ? 'Encode and Download APNG' : 'Encode and Download Image';
+  analyseCapacity();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1131,6 +1141,214 @@ function _showCapOver(cap) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// MULTI-FRAME  (Animated PNG steganography)
+//
+// Audio payload is split across APNG frames sequentially.
+// Frame 0 contains the AHID header + start of audio bytes.
+// Frame N continues from where frame N-1 left off.
+// GIF input: each GIF frame becomes one APNG frame (with its own
+//            audio chunk hidden inside its pixels).
+// Static image: the same image repeats across all frames.
+//
+// Rules for multi-frame mode:
+//   - Always bpc=1, no scatter (simplifies cross-frame sync)
+//   - Output is always .apng.png (viewable as still in old browsers)
+//   - Per-frame capacity = floor(W * H * 3 / 8) bytes
+//   - Number of frames = ceil(payload.length / perFrameCapacity)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Returns how many bytes of payload one frame of dimensions W×H can carry
+ * in 1-bit mode (always used for multi-frame to keep cross-frame decoding simple).
+ */
+function mfFrameCapacity(w, h) {
+  return Math.floor(w * h * 3 / 8);
+}
+
+/**
+ * Encode audio into an animated APNG with audio spread across frames.
+ * sourcFrames — array of Uint8ClampedArray (RGBA) from GIF parser, or null for static
+ * sourceImg   — the loaded bitmap for static images (drawn on each frame)
+ * rW, rH      — output dimensions
+ * payload     — full Uint8Array (AHID header + WAV bytes)
+ * delayMs     — per-frame delay
+ * baseName    — base filename for download
+ */
+function doEncodeMultiFrame(sourceFrames, sourceImg, rW, rH, payload, delayMs, baseName) {
+  var cap       = mfFrameCapacity(rW, rH);
+  var numFrames = Math.ceil(payload.length / cap);
+  var btn       = $('encBtn');
+
+  dbg('Multi-frame encode: ' + numFrames + ' frames, ' + fmtB(payload.length) + ' payload, ' + fmtB(cap) + '/frame');
+
+  if (numFrames > 500) {
+    st('encStatus', 'err', 'Audio too long for this image size — needs ' + numFrames + ' frames (max 500). Enlarge image or increase speed.');
+    btn.disabled = false;
+    return Promise.resolve();
+  }
+
+  prog('encFill', 'encLbl', 'encPct', 10, 'Encoding frames…');
+  st('encStatus', 'info', 'Encoding ' + numFrames + ' frames…');
+
+  // For each frame: get base RGBA from source, embed payload chunk
+  var framePromises = [];
+  for (var f = 0; f < numFrames; f++) {
+    (function (frameIdx) {
+      var payloadStart = frameIdx * cap;
+      var payloadEnd   = Math.min(payloadStart + cap, payload.length);
+      var chunk        = payload.subarray(payloadStart, payloadEnd);
+
+      var baseRGBA;
+      if (sourceFrames && sourceFrames.length > 0) {
+        // GIF input: use frame f (cycle if fewer GIF frames than needed)
+        baseRGBA = new Uint8ClampedArray(sourceFrames[frameIdx % sourceFrames.length].rgba);
+      } else {
+        // Static image: draw onto fresh canvas
+        var cv2  = document.createElement('canvas');
+        cv2.width = rW; cv2.height = rH;
+        cv2.getContext('2d').drawImage(sourceImg, 0, 0, rW, rH);
+        baseRGBA = cv2.getContext('2d').getImageData(0, 0, rW, rH).data;
+        baseRGBA = new Uint8ClampedArray(baseRGBA); // own copy
+      }
+
+      framePromises.push(
+        lsbEmbedMainThread(baseRGBA, chunk, function () {}, null, 1, null)
+          .then(function (modified) {
+            prog('encFill', 'encLbl', 'encPct',
+              10 + ((frameIdx + 1) / numFrames) * 75,
+              'Encoding frame ' + (frameIdx + 1) + ' / ' + numFrames + '…');
+            return modified;
+          })
+      );
+    }(f));
+  }
+
+  // Run sequentially (avoids spawning N simultaneous operations)
+  var resultFrames = new Array(numFrames);
+  var chain = Promise.resolve();
+  for (var fi = 0; fi < numFrames; fi++) {
+    (function (idx) {
+      chain = chain.then(function () { return framePromises[idx]; })
+        .then(function (pixels) { resultFrames[idx] = pixels; });
+    }(fi));
+  }
+
+  return chain
+    .then(function () {
+      prog('encFill', 'encLbl', 'encPct', 87, 'Building APNG…');
+      st('encStatus', 'info', 'Building animated PNG…');
+      dbg('All frames encoded, building APNG…');
+      return encodeAPNG(resultFrames, rW, rH, delayMs);
+    })
+    .then(function (apngBytes) {
+      prog('encFill', 'encLbl', 'encPct', 98, 'Saving…');
+      var blob = new Blob([apngBytes], { type: 'image/png' });
+      gLastBlobSize = blob.size;
+      triggerDownload(blob, 'audiohide_' + baseName + '.apng.png');
+      return blob.size;
+    });
+}
+
+/**
+ * Decode audio from a multi-frame APNG.
+ * Called from doDecode() when an APNG is detected.
+ * buffer — ArrayBuffer of the APNG file
+ */
+function doDecodeMultiFrame(buffer) {
+  var btn = $('decBtn');
+
+  prog('decFill', 'decLbl', 'decPct', 5, 'Parsing APNG frames…');
+  st('decStatus', 'info', 'Parsing animated PNG…');
+  dbg('Multi-frame decode: parsing APNG…');
+
+  return parseAPNG(buffer).then(function (apng) {
+    var frames = apng.frames;
+    var rW = apng.width, rH = apng.height;
+    var cap = mfFrameCapacity(rW, rH);
+
+    dbg('APNG: ' + frames.length + ' frames, ' + rW + 'x' + rH + ', cap=' + fmtB(cap) + '/frame');
+
+    if (frames.length === 0) throw new Error('No frames found in APNG');
+
+    prog('decFill', 'decLbl', 'decPct', 15, 'Reading frame 1 / ' + frames.length + '…');
+
+    // Step 1: Extract header bytes from frame 0 (always bpc=1, no scatter)
+    return lsbExtractMainThread(frames[0], HEADER_BYTES, 0, function () {}, null, 1, null)
+      .then(function (hdrBytes) {
+        var hv = new DataView(hdrBytes.buffer);
+
+        // Validate AHID magic
+        for (var i = 0; i < 4; i++) {
+          if (hdrBytes[i] !== MAGIC[i]) throw new Error('NOAHID');
+        }
+
+        var dataLen   = hv.getUint32(4,  false);
+        var speedX1k  = hv.getUint32(8,  false);
+        var origDurMs = hv.getUint32(12, false);
+        var bpc       = hv.getUint8(16) || 1;
+        var channels  = hv.getUint8(17) || 1;
+        var speed     = speedX1k / 1000;
+
+        if (dataLen === 0 || dataLen > 400 * 1024 * 1024) throw new Error('BADHDR');
+        if (bpc !== 1) {
+          dbg('Warning: APNG was encoded with bpc=' + bpc + ', decoding with bpc=1 (multi-frame uses bpc=1)');
+        }
+
+        dbg('Header: dataLen=' + fmtB(dataLen) + ', speed=' + speed.toFixed(2) + 'x, bpc=' + bpc);
+        st('decStatus', 'info', 'Found ' + frames.length + '-frame APNG, extracting ' + fmtB(dataLen) + '…');
+
+        // Step 2: Extract audio bytes from all frames sequentially
+        // Total bytes needed = HEADER_BYTES + dataLen, but header comes from frame 0 already parsed.
+        // We re-extract frame 0 fully (including its audio chunk) then continue.
+        var totalNeeded = HEADER_BYTES + dataLen;
+        var allChunks   = [];
+        var accumulated = 0;
+
+        var extractChain = Promise.resolve();
+        for (var f = 0; f < frames.length && accumulated < totalNeeded; f++) {
+          (function (fi, frameData) {
+            var frameStart  = 0; // always start from bit 0 in each frame
+            var bytesInFrame = Math.min(cap, totalNeeded - accumulated);
+            accumulated += bytesInFrame;
+            var localF = fi;
+
+            extractChain = extractChain.then(function () {
+              var pct = 15 + ((localF + 1) / frames.length) * 70;
+              prog('decFill', 'decLbl', 'decPct', pct,
+                'Extracting frame ' + (localF + 1) + ' / ' + frames.length + '…');
+              return lsbExtractMainThread(frameData, bytesInFrame, frameStart, function () {}, null, 1, null);
+            }).then(function (chunk) {
+              allChunks.push(chunk);
+            });
+          }(f, frames[f]));
+        }
+
+        return extractChain.then(function () {
+          // Concatenate all frame chunks, skip the header bytes (already parsed)
+          var totalExtracted = allChunks.reduce(function (s, c) { return s + c.length; }, 0);
+          var flat = new Uint8Array(totalExtracted);
+          var off  = 0;
+          allChunks.forEach(function (c) { flat.set(c, off); off += c.length; });
+
+          // Audio bytes start after HEADER_BYTES in the flat stream
+          var audioBytes = flat.subarray(HEADER_BYTES, HEADER_BYTES + dataLen);
+
+          return {
+            audioBytes: audioBytes,
+            dataLen:    dataLen,
+            origDurMs:  origDurMs,
+            encDurMs:   Math.round(origDurMs / speed),
+            speed:      speed,
+            bpc:        bpc,
+            channels:   channels,
+            numFrames:  frames.length
+          };
+        });
+      });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
 // ENCODE
 // ═══════════════════════════════════════════════════════════════
 
@@ -1139,6 +1357,10 @@ function doEncode() {
     st('encStatus', 'err', 'Missing files or no valid speed. Check image and audio.');
     return;
   }
+
+  // Branch: multi-frame APNG mode uses a different flow
+  var multiFrame = $('multiFrameMode') && $('multiFrameMode').checked;
+  if (multiFrame) { doEncodeMultiFrameStart(); return; }
 
   var btn = $('encBtn');
   btn.disabled = true;
@@ -1254,6 +1476,85 @@ function doEncode() {
     });
 }
 
+/**
+ * Entry point for multi-frame APNG encode.
+ * Handles GIF input (parse frames) or static image (repeat).
+ * Then calls doEncodeMultiFrame() with the prepared frame data.
+ */
+function doEncodeMultiFrameStart() {
+  var btn = $('encBtn');
+  btn.disabled = true;
+  stHide('encStatus');
+  $('encProg').style.display = 'block';
+  var iosNote = $('iosNote'); if (iosNote) iosNote.style.display = 'none';
+
+  var rW = parseInt($('rW').value, 10) || gOrigW;
+  var rH = parseInt($('rH').value, 10) || gOrigH;
+  var delayMs = parseInt($('mfDelay').value, 10) || 200;
+  var baseName = gImgFile.name.replace(/\.[^.]+$/, '');
+  var isGIF    = gImgFile.type === 'image/gif' || /\.gif$/i.test(gImgFile.name);
+
+  prog('encFill', 'encLbl', 'encPct', 3, 'Loading…');
+  st('encStatus', 'info', 'Processing audio…');
+
+  fileToArrayBuffer(gAudFile)
+    .then(function (ab) { return processAudio(ab, gSpeed); })
+    .then(function (r) {
+      prog('encFill', 'encLbl', 'encPct', 20, 'Building payload…');
+      // Multi-frame always uses bpc=1, 1=mono (scatter not supported — cross-frame sync)
+      var payload = buildPayload(r.wav, Math.round(gSpeed * 1000), r.origDurMs, 1, 1);
+      dbg('Multi-frame payload: ' + fmtB(payload.length) + ', speed=' + gSpeed.toFixed(2) + 'x');
+
+      if (isGIF) {
+        prog('encFill', 'encLbl', 'encPct', 25, 'Parsing GIF frames…');
+        st('encStatus', 'info', 'Parsing GIF…');
+        return fileToArrayBuffer(gImgFile).then(function (gifBuf) {
+          var gifData = parseGIF(gifBuf);
+          dbg('GIF: ' + gifData.frames.length + ' frames, ' + gifData.width + 'x' + gifData.height);
+          // Scale GIF frames to target dimensions if needed
+          var scaledFrames;
+          if (gifData.width === rW && gifData.height === rH) {
+            scaledFrames = gifData.frames;
+          } else {
+            // Scale each frame via canvas
+            scaledFrames = gifData.frames.map(function (f) {
+              var cv2 = document.createElement('canvas');
+              cv2.width = rW; cv2.height = rH;
+              var ctx2 = cv2.getContext('2d');
+              var tmpCv = document.createElement('canvas');
+              tmpCv.width = gifData.width; tmpCv.height = gifData.height;
+              var tmpCtx = tmpCv.getContext('2d');
+              tmpCtx.putImageData(new ImageData(f.rgba, gifData.width, gifData.height), 0, 0);
+              ctx2.drawImage(tmpCv, 0, 0, rW, rH);
+              return { rgba: new Uint8ClampedArray(ctx2.getImageData(0, 0, rW, rH).data), delayMs: f.delayMs };
+            });
+            dbg('GIF frames scaled to ' + rW + 'x' + rH);
+          }
+          return doEncodeMultiFrame(scaledFrames, null, rW, rH, payload, delayMs, baseName);
+        });
+      } else {
+        // Static image — load as bitmap, pass as sourceImg
+        return loadImageBitmap(gImgFile).then(function (bmp) {
+          return doEncodeMultiFrame(null, bmp, rW, rH, payload, delayMs, baseName);
+        });
+      }
+    })
+    .then(function (blobSize) {
+      prog('encFill', 'encLbl', 'encPct', 100, 'Done!');
+      var cap      = mfFrameCapacity(rW, rH);
+      var numFrames = Math.ceil(10 / cap) || '?'; // placeholder — doEncodeMultiFrame logs it
+      st('encStatus', 'ok', 'Done. APNG downloaded.'
+        + ' Output: ' + fmtB(blobSize) + '. Speed: ' + gSpeed.toFixed(2) + 'x.'
+        + ' Tip: drop this file into the Decode tab to extract the audio.');
+      btn.disabled = false;
+    })
+    ['catch'](function (e) {
+      st('encStatus', 'err', 'Error: ' + (e && e.message ? e.message : String(e)));
+      dbg('Multi-frame encode error: ' + (e && e.message ? e.message : String(e)));
+      btn.disabled = false;
+    });
+}
+
 // ═══════════════════════════════════════════════════════════════
 // DECODE
 // ═══════════════════════════════════════════════════════════════
@@ -1267,104 +1568,23 @@ function doDecode() {
   $('audioWrap').style.display = 'none';
   $('infoCard').style.display  = 'none';
   $('decProg').style.display   = 'block';
-  setCancelVisible('cancelDecBtn', !USE_WORKER);
+  setCancelVisible('cancelDecBtn', false);
 
-  var speed, bpc, channels, scatterKey;
+  st('decStatus', 'info', 'Loading…');
+  dbg('Decode start: ' + gDecFile.name + ' (' + fmtB(gDecFile.size) + ')');
 
-  st('decStatus', 'info', 'Loading image…');
-
-  loadImageBitmap(gDecFile)
-    .then(function (bmp) {
-      var cv    = document.createElement('canvas');
-      cv.width  = bmp.width  || bmp.naturalWidth;
-      cv.height = bmp.height || bmp.naturalHeight;
-      var ctx   = cv.getContext('2d');
-      ctx.drawImage(bmp, 0, 0);
-      var data  = ctx.getImageData(0, 0, cv.width, cv.height).data;
-
-      var decKey      = $('decPasskey') ? $('decPasskey').value.trim() : '';
-      var totalCh     = cv.width * cv.height * 3;
-      scatterKey      = decKey || null;
-
-      prog('decFill', 'decLbl', 'decPct', 5, 'Reading header…');
-
-      // Header is always 1-bit, no scatter — read it first to get bpc
-      return lsbExtractMainThread(data, HEADER_BYTES, 0, function () {}, null, 1, null)
-        .then(function (hdrBytes) {
-          var hv = new DataView(hdrBytes.buffer);
-
-          // Validate magic bytes
-          for (var i = 0; i < 4; i++) {
-            if (hdrBytes[i] !== MAGIC[i]) throw new Error('NOAHID');
-          }
-
-          var dataLen   = hv.getUint32(4,  false);
-          var speedX1k  = hv.getUint32(8,  false);
-          var origDurMs = hv.getUint32(12, false);
-          bpc      = hv.getUint8(16) || 1;
-          channels = hv.getUint8(17) || 1;
-          speed    = speedX1k / 1000;
-          var encDurMs  = Math.round(origDurMs / speed);
-
-          if (dataLen === 0 || dataLen > 400 * 1024 * 1024) throw new Error('BADHDR');
-
-          st('decStatus', 'info', 'Extracting ' + fmtB(dataLen) + '…');
-          prog('decFill', 'decLbl', 'decPct', 10, 'Extracting bits…');
-
-          var decStart = Date.now();
-          return lsbExtract(data, dataLen, HEADER_BYTES * 8, function (p) {
-            var pct = 10 + p * 75;
-            var eta = '';
-            if (p > 0.03 && p < 0.97) {
-              var elapsed = Date.now() - decStart;
-              eta = ' (~' + fmtEta((elapsed / p) * (1 - p)) + ')';
-            }
-            prog('decFill', 'decLbl', 'decPct', pct, 'Extracting ' + Math.round(pct) + '%' + eta);
-          }, scatterKey, bpc, totalCh)
-            .then(function (audioBytes) {
-              return { audioBytes: audioBytes, dataLen: dataLen, origDurMs: origDurMs, encDurMs: encDurMs };
-            });
-        });
-    })
-    .then(function (r) {
-      // Populate info card
-      $('iSize').textContent    = fmtB(r.dataLen);
-      $('iSpeed').textContent   = speed.toFixed(2) + 'x';
-      $('iOrig').textContent    = fmtT(r.origDurMs);
-      $('iEnc').textContent     = fmtT(r.encDurMs);
-      $('iBpc').textContent     = bpc + '-bit ' + (channels === 2 ? 'stereo' : 'mono');
-      $('infoCard').style.display = 'block';
-
-      var note = $('iNote');
-      if (speed <= 1.01) {
-        note.innerHTML = '<b>No speed adjustment</b> — plays at original speed and pitch.';
-      } else {
-        var semi = (12 * Math.log2(speed)).toFixed(1);
-        note.innerHTML = '<b>Encoded at ' + speed.toFixed(2) + 'x (' + (semi > 0 ? '+' : '') + semi + ' sem).</b><br>'
-          + 'Stored: ' + fmtT(r.encDurMs) + ' — Original: ' + fmtT(r.origDurMs) + '.';
-      }
-
-      // Optional pitch correction
-      var doPitch = $('pitchCorrect') && $('pitchCorrect').checked && speed > 1.01;
-      if (doPitch) {
-        prog('decFill', 'decLbl', 'decPct', 88, 'Pitch correcting…');
-        st('decStatus', 'info', 'Restoring original pitch…');
-        return pitchCorrect(r.audioBytes, speed).then(function (fixed) {
-          $('iNote').innerHTML += '<br><b>Pitch correction applied</b> — audio restored to original.';
-          return { bytes: fixed, dataLen: r.dataLen, pitched: true };
+  // Read the full file buffer first — needed to detect APNG before drawing to canvas
+  fileToArrayBuffer(gDecFile)
+    .then(function (buf) {
+      if (detectAPNG(buf)) {
+        dbg('Detected APNG — multi-frame decode');
+        return doDecodeMultiFrame(buf).then(function (r) {
+          return finishDecode(r.audioBytes, r.dataLen, r.origDurMs, r.encDurMs,
+                              r.speed, r.bpc, r.channels, r.numFrames);
         });
       }
-      return { bytes: r.audioBytes, dataLen: r.dataLen, pitched: false };
-    })
-    .then(function (r) {
-      gExtracted = new Blob([r.bytes], { type: 'audio/wav' });
-      $('audioOut').src = URL.createObjectURL(gExtracted);
-      $('audioWrap').style.display = 'block';
-      setCancelVisible('cancelDecBtn', false);
-      prog('decFill', 'decLbl', 'decPct', 100, 'Done!');
-      st('decStatus', 'ok', 'Extracted ' + fmtB(r.dataLen) + '.'
-        + (r.pitched ? ' Pitch corrected.' : ' Press play to listen.'));
-      btn.disabled = false;
+      dbg('Single-frame decode (standard PNG/BMP)');
+      return doDecodeSingleFrame(buf);
     })
     ['catch'](function (e) {
       setCancelVisible('cancelDecBtn', false);
@@ -1377,9 +1597,119 @@ function doDecode() {
         prog('decFill', 'decLbl', 'decPct', 0, '');
       } else {
         st('decStatus', 'err', 'Error: ' + (e && e.message ? e.message : String(e)));
+        dbg('Decode error: ' + (e && e.message ? e.message : String(e)));
       }
       btn.disabled = false;
     });
+}
+
+/**
+ * Single-frame decode (existing PNG/BMP path).
+ * Accepts the already-read ArrayBuffer so we don't re-read the file.
+ */
+function doDecodeSingleFrame(buf) {
+  var btn = $('decBtn');
+  var speed, bpc, channels, scatterKey;
+
+  // Use a Blob URL to pass the buffer to loadImageBitmap
+  var blob    = new Blob([buf], { type: gDecFile.type || 'image/png' });
+  var blobUrl = URL.createObjectURL(blob);
+  var fakeFile = { name: gDecFile.name, type: gDecFile.type, size: gDecFile.size, _blobUrl: blobUrl };
+
+  return loadImageBitmap(gDecFile)
+    .then(function (bmp) {
+      URL.revokeObjectURL(blobUrl);
+      var cv    = document.createElement('canvas');
+      cv.width  = bmp.width  || bmp.naturalWidth;
+      cv.height = bmp.height || bmp.naturalHeight;
+      var ctx   = cv.getContext('2d');
+      ctx.drawImage(bmp, 0, 0);
+      var data  = ctx.getImageData(0, 0, cv.width, cv.height).data;
+
+      var decKey  = $('decPasskey') ? $('decPasskey').value.trim() : '';
+      var totalCh = cv.width * cv.height * 3;
+      scatterKey  = decKey || null;
+
+      prog('decFill', 'decLbl', 'decPct', 5, 'Reading header…');
+      setCancelVisible('cancelDecBtn', !USE_WORKER);
+
+      return lsbExtractMainThread(data, HEADER_BYTES, 0, function () {}, null, 1, null)
+        .then(function (hdrBytes) {
+          var hv = new DataView(hdrBytes.buffer);
+          for (var i = 0; i < 4; i++) {
+            if (hdrBytes[i] !== MAGIC[i]) throw new Error('NOAHID');
+          }
+          var dataLen   = hv.getUint32(4,  false);
+          var speedX1k  = hv.getUint32(8,  false);
+          var origDurMs = hv.getUint32(12, false);
+          bpc      = hv.getUint8(16) || 1;
+          channels = hv.getUint8(17) || 1;
+          speed    = speedX1k / 1000;
+          var encDurMs = Math.round(origDurMs / speed);
+
+          if (dataLen === 0 || dataLen > 400 * 1024 * 1024) throw new Error('BADHDR');
+
+          st('decStatus', 'info', 'Extracting ' + fmtB(dataLen) + '…');
+          prog('decFill', 'decLbl', 'decPct', 10, 'Extracting bits…');
+
+          var decStart = Date.now();
+          return lsbExtract(data, dataLen, HEADER_BYTES * 8, function (p) {
+            var pct = 10 + p * 75;
+            var eta = p > 0.03 && p < 0.97
+              ? ' (~' + fmtEta(((Date.now() - decStart) / p) * (1 - p)) + ')' : '';
+            prog('decFill', 'decLbl', 'decPct', pct, 'Extracting ' + Math.round(pct) + '%' + eta);
+          }, scatterKey, bpc, totalCh)
+          .then(function (audioBytes) {
+            return finishDecode(audioBytes, dataLen, origDurMs, encDurMs, speed, bpc, channels, 1);
+          });
+        });
+    });
+}
+
+/**
+ * Shared finish step: shows info card, pitch-corrects if needed, starts audio player.
+ * numFrames — 1 for single-frame, N for multi-frame APNG.
+ */
+function finishDecode(audioBytes, dataLen, origDurMs, encDurMs, speed, bpc, channels, numFrames) {
+  var btn = $('decBtn');
+  $('iSize').textContent    = fmtB(dataLen) + (numFrames > 1 ? ' (' + numFrames + ' frames)' : '');
+  $('iSpeed').textContent   = speed.toFixed(2) + 'x';
+  $('iOrig').textContent    = fmtT(origDurMs);
+  $('iEnc').textContent     = fmtT(encDurMs);
+  $('iBpc').textContent     = bpc + '-bit ' + (channels === 2 ? 'stereo' : 'mono')
+    + (numFrames > 1 ? ', ' + numFrames + '-frame APNG' : '');
+  $('infoCard').style.display = 'block';
+
+  var note = $('iNote');
+  if (speed <= 1.01) {
+    note.innerHTML = '<b>No speed adjustment</b> — plays at original speed and pitch.';
+  } else {
+    var semi = (12 * Math.log2(speed)).toFixed(1);
+    note.innerHTML = '<b>Encoded at ' + speed.toFixed(2) + 'x (' + (semi > 0 ? '+' : '') + semi + ' sem).</b><br>'
+      + 'Stored: ' + fmtT(encDurMs) + ' — Original: ' + fmtT(origDurMs) + '.';
+  }
+
+  var doPitch = $('pitchCorrect') && $('pitchCorrect').checked && speed > 1.01;
+  var chain   = doPitch
+    ? (prog('decFill', 'decLbl', 'decPct', 88, 'Pitch correcting…'),
+       st('decStatus', 'info', 'Restoring original pitch…'),
+       pitchCorrect(audioBytes, speed).then(function (fixed) {
+         $('iNote').innerHTML += '<br><b>Pitch correction applied</b> — audio restored to original.';
+         return { bytes: fixed, pitched: true };
+       }))
+    : Promise.resolve({ bytes: audioBytes, pitched: false });
+
+  return chain.then(function (r) {
+    gExtracted = new Blob([r.bytes], { type: 'audio/wav' });
+    $('audioOut').src = URL.createObjectURL(gExtracted);
+    $('audioWrap').style.display = 'block';
+    setCancelVisible('cancelDecBtn', false);
+    prog('decFill', 'decLbl', 'decPct', 100, 'Done!');
+    st('decStatus', 'ok', 'Extracted ' + fmtB(dataLen) + '.'
+      + (numFrames > 1 ? ' Multi-frame APNG (' + numFrames + ' frames).' : '')
+      + (r.pitched ? ' Pitch corrected.' : ' Press play to listen.'));
+    btn.disabled = false;
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1541,6 +1871,8 @@ setupDrop('decDrop', 'decInput', function (f) {
   dbg('OfflineAudioContext: ' + (OfflineAudioCtx ? 'yes' : 'NO'));
   dbg('createImageBitmap: ' + (typeof createImageBitmap === 'function' ? 'yes' : 'no (fallback active)'));
   dbg('File.arrayBuffer: ' + (typeof File !== 'undefined' && File.prototype.arrayBuffer ? 'yes' : 'no (FileReader fallback active)'));
+  dbg('CompressionStream:   ' + (typeof CompressionStream   !== 'undefined' ? 'yes' : 'NO (APNG encode uses STORE fallback)'));
+  dbg('DecompressionStream: ' + (typeof DecompressionStream !== 'undefined' ? 'yes' : 'NO (APNG decode not available)'));
 
   // Warn if Web Audio is missing (very old browser)
   if (!AudioCtx) {
@@ -1596,6 +1928,8 @@ function refreshDebugPanel() {
   $('dbgProto').textContent   = window.location.protocol;
   $('dbgMobile').textContent  = IS_MOBILE ? (IS_IOS ? 'iOS' : 'Android') : 'No';
   $('dbgVer').textContent     = VERSION;
+  $('dbgCompress').textContent = (typeof CompressionStream   !== 'undefined') ? 'OK (native)' : 'NO (zlib STORE fallback — larger files)';
+  $('dbgDecompress').textContent = (typeof DecompressionStream !== 'undefined') ? 'OK (native)' : 'NO — multi-frame decode will fail';
 
   // Live log
   var el = $('debugLog');
