@@ -147,6 +147,31 @@
   </div>
 
   <hr>
+  <h3>Debug</h3>
+  <div class="setting-row">
+    <div class="setting-desc">Shows browser compatibility info and a live event log. Share this when reporting a bug.</div>
+    <button class="btn-settings" onclick="toggleDebug()" style="margin-top:6px;">Show / Hide debug info</button>
+  </div>
+
+  <div id="debugPanel" class="debug-panel">
+    <table class="debug-table">
+      <tr><td class="dbg-key">Version</td>       <td id="dbgVer">--</td></tr>
+      <tr><td class="dbg-key">Web Worker</td>    <td id="dbgWorker">--</td></tr>
+      <tr><td class="dbg-key">AudioContext</td>  <td id="dbgAudio">--</td></tr>
+      <tr><td class="dbg-key">OfflineACtx</td>   <td id="dbgOffline">--</td></tr>
+      <tr><td class="dbg-key">ImageBitmap</td>   <td id="dbgBitmap">--</td></tr>
+      <tr><td class="dbg-key">File.arrayBuf</td> <td id="dbgArrBuf">--</td></tr>
+      <tr><td class="dbg-key">Protocol</td>      <td id="dbgProto">--</td></tr>
+      <tr><td class="dbg-key">Mobile</td>        <td id="dbgMobile">--</td></tr>
+    </table>
+    <div style="margin-top:8px;font-size:11px;font-weight:bold;margin-bottom:3px;">Event log:</div>
+    <pre id="debugLog" class="debug-log">(no events yet)</pre>
+    <button class="btn-sm" id="copyDebugBtn" onclick="copyDebugInfo()" style="margin-top:6px;">
+      Copy to clipboard
+    </button>
+  </div>
+
+  <hr>
   <button class="btn-settings" onclick="toggleSettings()">Close settings</button>
 </div>
 
@@ -157,7 +182,7 @@
     <li><b>Encode:</b> Select a PNG image and a song, then click "Encode and Download".</li>
     <li><b>Decode:</b> Drop an encoded PNG — it auto-detects and switches to the Decode tab.</li>
     <li>If the image is too small, audio is sped up to fit. Decode reverses this automatically.</li>
-    <li>Always keep output as PNG — re-saving as JPEG destroys the hidden data.</li>
+    <li>Always keep the output as PNG — re-saving as JPEG destroys the hidden data. GIF input uses first frame only.</li>
   </ol>
 </div>
 
@@ -177,8 +202,8 @@
     <div class="dz" id="imgDrop">
       Tap or click to select an image, or drag and drop
       <div class="dz-file" id="imgFileLbl"></div>
-      <div class="dz-hint" id="imgHint">PNG or BMP only — JPEG cannot hold hidden data</div>
-      <input type="file" id="imgInput" accept="image/png,image/bmp" style="font-size:16px;"/>
+      <div class="dz-hint" id="imgHint">PNG, BMP, or GIF — JPEG cannot hold hidden data. Output is always PNG.</div>
+      <input type="file" id="imgInput" accept="image/png,image/bmp,image/gif" style="font-size:16px;"/>
     </div>
     <img id="imgPrev" class="preview" alt="Image preview"/>
 

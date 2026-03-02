@@ -41,7 +41,7 @@
 // VERSION & CONSTANTS
 // ═══════════════════════════════════════════════════════════════
 
-var VERSION = '1.0.17';
+var VERSION = '1.0.19';
 
 /** Magic bytes at the start of every AudioHide payload. */
 var MAGIC = [0x41, 0x48, 0x49, 0x44]; // "AHID"
@@ -133,15 +133,19 @@ var IS_IOS    = /iP(hone|ad|od)/i.test(navigator.userAgent);
 var IS_MOBILE = IS_IOS || /Android/i.test(navigator.userAgent);
 
 /**
- * Workers need to be served over http(s) — file:// breaks Chrome.
- * Test at startup; fall back to main-thread chunked loops if needed.
+ * USE_WORKER — true if Web Workers are available and likely to work.
+ * This is a var (not const) so the worker error handler can set it to false
+ * at runtime if the worker script fails to load (e.g. wrong path, CSP block).
+ * When set to false, lsbEmbed/lsbExtract automatically use the main-thread fallback.
  */
 var USE_WORKER = (function () {
   if (typeof Worker === 'undefined') return false;
-  // file:// protocol blocks Workers in Chrome
   if (window.location.protocol === 'file:') return false;
   return true;
 }());
+
+/** Log of worker/debug events for the debug panel. */
+var gDebugLog = [];
 
 // ═══════════════════════════════════════════════════════════════
 // AUDIO CONTEXT COMPAT  (webkit prefix for old iOS/Safari)
@@ -156,6 +160,18 @@ var OfflineAudioCtx = window.OfflineAudioContext || window.webkitOfflineAudioCon
 
 /** Shorthand for document.getElementById. */
 function $(id) { return document.getElementById(id); }
+
+/** Append a line to the debug log (shown in the debug panel). */
+function dbg(msg) {
+  var ts  = new Date().toISOString().substr(11, 12);
+  var line = '[' + ts + '] ' + msg;
+  gDebugLog.push(line);
+  // Keep last 50 lines only
+  if (gDebugLog.length > 50) gDebugLog.shift();
+  // Live-update the panel if open
+  var el = $('debugLog');
+  if (el) el.textContent = gDebugLog.join('\n');
+}
 
 /** Format bytes as human-readable string. */
 function fmtB(b) {
@@ -666,16 +682,29 @@ function buildPayload(wav, speedX1000, origDurMs, bpc, channels) {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * Embed payload bits into imageData using a Web Worker.
+ * Embed using a Web Worker.
  *
- * We do NOT transfer data.buffer — the main thread keeps ownership so we
- * can write the result back into the original Uint8ClampedArray when done.
- * (Transferring would detach data, making it impossible to copy back.)
- * payload IS transferred (we don't need it again after postMessage).
+ * Both data.buffer and payload.buffer are TRANSFERRED (zero-copy).
+ * After postMessage, data is detached on the main thread — do not use it.
+ * Worker returns modified buffer; we resolve with a new Uint8ClampedArray
+ * so the caller can build a new ImageData for putImageData.
+ *
+ * Resolves with: Uint8ClampedArray (the modified pixel data)
  */
 function lsbEmbedWorker(data, payload, onProg, scatterKey, bpc, totalChannels) {
   return new Promise(function (resolve, reject) {
-    var worker = new Worker('lsb-worker.js');
+    var worker;
+    try {
+      worker = new Worker('lsb-worker.js');
+    } catch (e) {
+      dbg('Worker() constructor threw: ' + e.message + ' — falling back to main thread');
+      USE_WORKER = false;
+      var scatter = scatterKey ? buildScatterMap(scatterKey, totalChannels) : null;
+      lsbEmbedMainThread(data, payload, onProg, scatter, bpc, encCancelRef).then(
+        function () { resolve(data); }, reject
+      );
+      return;
+    }
 
     worker.onmessage = function (e) {
       var msg = e.data;
@@ -683,91 +712,119 @@ function lsbEmbedWorker(data, payload, onProg, scatterKey, bpc, totalChannels) {
         onProg(msg.value, Date.now());
 
       } else if (msg.type === 'done') {
-        // Worker returns the modified pixels as an ArrayBuffer.
-        // Copy every byte back into the original Uint8ClampedArray so
-        // putImageData() will pick up the changes.
-        var result = new Uint8ClampedArray(msg.data);
-        for (var i = 0; i < result.length; i++) data[i] = result[i];
         worker.terminate();
-        resolve();
+        dbg('Worker embed done.');
+        resolve(new Uint8ClampedArray(msg.data));
 
       } else if (msg.type === 'error') {
         worker.terminate();
+        dbg('Worker embed error: ' + msg.message);
         reject(new Error(msg.message));
       }
     };
 
-    // worker.onerror fires when the worker script itself fails to load or throws
-    // uncaught. The argument is an ErrorEvent — read .message, not String(err).
     worker.onerror = function (ev) {
       worker.terminate();
-      var msg = ev.message || ('Worker error at ' + ev.filename + ':' + ev.lineno);
-      reject(new Error(msg));
+      var isLoadFailure = !ev.filename && !ev.lineno;
+      if (isLoadFailure) {
+        dbg('Worker script failed to load — disabling Workers, retrying on main thread.');
+        USE_WORKER = false;
+        var scatter = scatterKey ? buildScatterMap(scatterKey, totalChannels) : null;
+        lsbEmbedMainThread(data, payload, onProg, scatter, bpc, encCancelRef).then(
+          function () { resolve(data); }, reject
+        );
+      } else {
+        var errMsg = ev.message + ' (' + ev.filename + ':' + ev.lineno + ')';
+        dbg('Worker onerror: ' + errMsg);
+        reject(new Error(errMsg));
+      }
     };
 
-    // Clone data (no transfer) so the original stays usable on the main thread.
-    // Transfer payload — we don't need it again.
+    dbg('Worker embed start — ' + fmtB(payload.length) + ', bpc=' + bpc + ', scatter=' + !!scatterKey);
+    // Transfer both buffers — zero-copy, no .slice() needed.
+    // data is detached on the main thread after this call.
     worker.postMessage({
       type:          'embed',
-      data:          data.buffer.slice(0), // slice = clone, original stays intact
+      data:          data.buffer,
       payload:       payload.buffer,
       bpc:           bpc,
       scatterKey:    scatterKey,
       totalChannels: totalChannels
-    }, [payload.buffer]);
+    }, [data.buffer, payload.buffer]);
   });
 }
 
 /**
  * Extract numBytes from imageData using a Web Worker.
+ * Auto-falls back to main thread if the Worker script fails to load.
  */
 function lsbExtractWorker(data, numBytes, startBit, onProg, scatterKey, bpc, totalChannels) {
   return new Promise(function (resolve, reject) {
-    var worker = new Worker('lsb-worker.js');
+    var worker;
+    try {
+      worker = new Worker('lsb-worker.js');
+    } catch (e) {
+      dbg('Worker() constructor threw: ' + e.message + ' — falling back to main thread');
+      USE_WORKER = false;
+      var scatter = scatterKey ? buildScatterMap(scatterKey, totalChannels) : null;
+      lsbExtractMainThread(data, numBytes, startBit, onProg, scatter, bpc, decCancelRef).then(resolve, reject);
+      return;
+    }
 
     worker.onmessage = function (e) {
       var msg = e.data;
       if (msg.type === 'progress') {
         onProg(msg.value);
       } else if (msg.type === 'done') {
-        // Worker transfers result as ArrayBuffer — wrap in Uint8Array to use it
         worker.terminate();
+        dbg('Worker extract done — ' + fmtB(numBytes));
         resolve(new Uint8Array(msg.result));
       } else if (msg.type === 'error') {
         worker.terminate();
+        dbg('Worker extract error: ' + msg.message);
         reject(new Error(msg.message));
       }
     };
 
     worker.onerror = function (ev) {
       worker.terminate();
-      var msg = ev.message || ('Worker error at ' + ev.filename + ':' + ev.lineno);
-      reject(new Error(msg));
+      var isLoadFailure = !ev.filename && !ev.lineno;
+      if (isLoadFailure) {
+        dbg('Worker script failed to load — disabling Workers, retrying on main thread.');
+        USE_WORKER = false;
+        var scatter = scatterKey ? buildScatterMap(scatterKey, totalChannels) : null;
+        lsbExtractMainThread(data, numBytes, startBit, onProg, scatter, bpc, decCancelRef).then(resolve, reject);
+      } else {
+        var errMsg = ev.message + ' (' + ev.filename + ':' + ev.lineno + ')';
+        dbg('Worker onerror: ' + errMsg);
+        reject(new Error(errMsg));
+      }
     };
 
-    // Clone data (no transfer) — we may need it again if decode fails
+    dbg('Worker extract start — ' + fmtB(numBytes) + ', bpc=' + bpc + ', scatter=' + !!scatterKey);
+    // Transfer data.buffer — zero-copy. Worker transfers it back only indirectly
+    // via result; we don't need the pixel data again after extraction.
     worker.postMessage({
       type:          'extract',
-      data:          data.buffer.slice(0),
+      data:          data.buffer,
       numBytes:      numBytes,
       startBit:      startBit,
       bpc:           bpc,
       scatterKey:    scatterKey,
       totalChannels: totalChannels
-    });
+    }, [data.buffer]);
   });
 }
 
 /**
- * Fallback: embed on the main thread using setTimeout chunking
- * to keep the UI responsive.  Used when Workers are unavailable.
- * cancelFlag — reference to gCancelEnc or gCancelDec.
+ * Fallback: embed on the main thread using setTimeout chunking.
+ * Resolves with the modified data array (same reference, modified in-place).
  */
 function lsbEmbedMainThread(data, payload, onProg, scatter, bpc, cancelRef) {
   bpc = bpc || 1;
   return new Promise(function (resolve, reject) {
     var totalBits = payload.length * 8;
-    var CHUNK     = 400000;
+    var CHUNK     = 600000;  // larger chunk = fewer setTimeout yields = faster overall
     var bit       = 0;
     var startMs   = Date.now();
 
@@ -779,21 +836,30 @@ function lsbEmbedMainThread(data, payload, onProg, scatter, bpc, cancelRef) {
       }
 
       var end = Math.min(bit + CHUNK, totalBits);
-      for (var i = bit; i < end; i++) {
-        var b      = (payload[i >> 3] >> (7 - (i & 7))) & 1;
-        var chIdx  = Math.floor(i / bpc);
-        var bitPos = i % bpc;
-        var ch     = scatter ? scatter(chIdx) : chIdx;
-        var pixel  = Math.floor(ch / 3);
-        var chan   = ch % 3;
-        var di     = pixel * 4 + chan;
-        var mask   = ~(1 << bitPos) & 0xFF;
-        data[di]   = (data[di] & mask) | (b << bitPos);
+
+      // Fast path: bpc=1, no scatter — skips division/modulo per bit
+      if (bpc === 1 && !scatter) {
+        for (var i = bit; i < end; i++) {
+          var b  = (payload[i >> 3] >> (7 - (i & 7))) & 1;
+          var di = (((i / 3) | 0) << 2) + (i % 3);
+          data[di] = (data[di] & 0xFE) | b;
+        }
+      } else {
+        for (var i2 = bit; i2 < end; i2++) {
+          var b2     = (payload[i2 >> 3] >> (7 - (i2 & 7))) & 1;
+          var chIdx  = (i2 / bpc) | 0;
+          var bitPos = i2 % bpc;
+          var ch     = scatter ? scatter(chIdx) : chIdx;
+          var di2    = (((ch / 3) | 0) << 2) + (ch % 3);
+          var mask   = ~(1 << bitPos) & 0xFF;
+          data[di2]  = (data[di2] & mask) | (b2 << bitPos);
+        }
       }
+
       bit = end;
       onProg(bit / totalBits, startMs);
       if (bit < totalBits) setTimeout(step, 0);
-      else resolve();
+      else resolve(data);
     }
     step();
   });
@@ -807,7 +873,7 @@ function lsbExtractMainThread(data, numBytes, startBit, onProg, scatter, bpc, ca
   return new Promise(function (resolve, reject) {
     var result    = new Uint8Array(numBytes);
     var totalBits = numBytes * 8;
-    var CHUNK     = 400000;
+    var CHUNK     = 600000;
     var bit       = 0;
 
     function step() {
@@ -818,17 +884,27 @@ function lsbExtractMainThread(data, numBytes, startBit, onProg, scatter, bpc, ca
       }
 
       var end = Math.min(bit + CHUNK, totalBits);
-      for (var i = bit; i < end; i++) {
-        var absBit = startBit + i;
-        var chIdx  = Math.floor(absBit / bpc);
-        var bitPos = absBit % bpc;
-        var ch     = scatter ? scatter(chIdx) : chIdx;
-        var pixel  = Math.floor(ch / 3);
-        var chan   = ch % 3;
-        var di     = pixel * 4 + chan;
-        var b      = (data[di] >> bitPos) & 1;
-        result[i >> 3] |= (b << (7 - (i & 7)));
+
+      // Fast path: bpc=1, no scatter
+      if (bpc === 1 && !scatter) {
+        var abs = startBit + bit;
+        for (var i = bit; i < end; i++, abs++) {
+          var di = (((abs / 3) | 0) << 2) + (abs % 3);
+          var b  = data[di] & 1;
+          result[i >> 3] |= (b << (7 - (i & 7)));
+        }
+      } else {
+        for (var i2 = bit; i2 < end; i2++) {
+          var absBit = startBit + i2;
+          var chIdx  = (absBit / bpc) | 0;
+          var bitPos = absBit % bpc;
+          var ch     = scatter ? scatter(chIdx) : chIdx;
+          var di2    = (((ch / 3) | 0) << 2) + (ch % 3);
+          var b2     = (data[di2] >> bitPos) & 1;
+          result[i2 >> 3] |= (b2 << (7 - (i2 & 7)));
+        }
       }
+
       bit = end;
       onProg(bit / totalBits);
       if (bit < totalBits) setTimeout(step, 0);
@@ -843,6 +919,12 @@ function lsbExtractMainThread(data, numBytes, startBit, onProg, scatter, bpc, ca
 var encCancelRef = { val: false };
 var decCancelRef = { val: false };
 
+/**
+ * lsbEmbed resolves with Uint8ClampedArray (the modified pixel data).
+ * Worker path: returns new array from transferred-and-returned buffer.
+ * Main-thread path: returns the same data reference (modified in-place).
+ * Caller should use: new ImageData(result, w, h) for putImageData.
+ */
 function lsbEmbed(data, payload, onProg, scatterKey, bpc, totalChannels) {
   encCancelRef.val = false;
   if (USE_WORKER) {
@@ -1135,9 +1217,12 @@ function doEncode() {
         prog('encFill', 'encLbl', 'encPct', pct, 'Encoding ' + Math.round(pct) + '%' + eta);
       }, scatterKey, bpc, totalChannels);
     })
-    .then(function () {
+    .then(function (modifiedPixels) {
       prog('encFill', 'encLbl', 'encPct', 93, 'Saving PNG…');
-      ctx.putImageData(imgData, 0, 0);
+      // Reconstruct ImageData from the returned pixel array.
+      // Worker path: modifiedPixels is a new Uint8ClampedArray from the transferred buffer.
+      // Main-thread path: same reference as imgData.data (modified in-place), also works.
+      ctx.putImageData(new ImageData(modifiedPixels, rW, rH), 0, 0);
       return new Promise(function (resolve, reject) {
         cv.toBlob(function (blob) {
           if (!blob) { reject(new Error('toBlob returned null — canvas may be tainted.')); return; }
@@ -1376,12 +1461,14 @@ function applySuggestedSize(w, h) {
 
 setupDrop('imgDrop', 'imgInput', function (f) {
   // Reject non-PNG/BMP immediately before doing anything else
-  var ok = (f.type === 'image/png' || f.type === 'image/bmp' ||
-            /\.(png|bmp)$/i.test(f.name));
+  // Allow PNG, BMP, and GIF. GIF: canvas captures first frame, output is always PNG.
+  // JPEG is rejected — its lossy compression destroys LSB data.
+  var ok = (f.type === 'image/png' || f.type === 'image/bmp' || f.type === 'image/gif' ||
+            /\.(png|bmp|gif)$/i.test(f.name));
   if (!ok) {
     st('encStatus', 'err',
-      'Only PNG or BMP files can be used as the carrier image. ' +
-      'JPEG compression destroys hidden data — please choose a .png or .bmp file.');
+      'Only PNG, BMP, or GIF files can be used as the carrier image. ' +
+      'JPEG compression destroys hidden data. Output is always saved as PNG.');
     return;
   }
 
@@ -1412,7 +1499,8 @@ setupDrop('imgDrop', 'imgInput', function (f) {
       $('rW').value               = gOrigW;
       $('rH').value               = gOrigH;
       $('rScale').value           = 100;
-      $('origDims').textContent   = gOrigW + ' × ' + gOrigH + ' px';
+      $('origDims').textContent   = gOrigW + ' × ' + gOrigH + ' px'
+        + (f.type === 'image/gif' ? ' (GIF — first frame only, output is PNG)' : '');
       $('newCap').textContent     = fmtB(pixelCap(gOrigW, gOrigH));
       $('estOutSize').textContent = 'approx ' + fmtB(Math.round(gOrigW * gOrigH * 3 * 0.82));
       $('resizeWrap').style.display = 'block';
@@ -1443,6 +1531,17 @@ setupDrop('decDrop', 'decInput', function (f) {
   var vd = $('versionDisplay');
   if (vd) vd.textContent = VERSION;
 
+  // Log environment info so debug panel is immediately useful
+  dbg('AudioHide v' + VERSION);
+  dbg('UA: ' + navigator.userAgent);
+  dbg('Protocol: ' + window.location.protocol);
+  dbg('Worker API: ' + (typeof Worker !== 'undefined' ? 'yes' : 'NO'));
+  dbg('USE_WORKER: ' + USE_WORKER);
+  dbg('AudioContext: ' + (AudioCtx ? 'yes' : 'NO'));
+  dbg('OfflineAudioContext: ' + (OfflineAudioCtx ? 'yes' : 'NO'));
+  dbg('createImageBitmap: ' + (typeof createImageBitmap === 'function' ? 'yes' : 'no (fallback active)'));
+  dbg('File.arrayBuffer: ' + (typeof File !== 'undefined' && File.prototype.arrayBuffer ? 'yes' : 'no (FileReader fallback active)'));
+
   // Warn if Web Audio is missing (very old browser)
   if (!AudioCtx) {
     var warn = $('compatWarn');
@@ -1470,3 +1569,71 @@ setupDrop('decDrop', 'decInput', function (f) {
   // Apply saved or system theme
   applyTheme(getCurrentTheme());
 }());
+
+// ═══════════════════════════════════════════════════════════════
+// DEBUG PANEL
+// ═══════════════════════════════════════════════════════════════
+
+function toggleDebug() {
+  var panel = $('debugPanel');
+  var open  = panel.classList.toggle('open');
+  if (open) refreshDebugPanel();
+}
+
+function refreshDebugPanel() {
+  // Static environment info
+  var workerStatus;
+  if (typeof Worker === 'undefined')             workerStatus = 'NO';
+  else if (window.location.protocol === 'file:') workerStatus = 'Disabled (file:// — serve over http)';
+  else if (!USE_WORKER)                          workerStatus = 'Disabled (load failure — using main thread)';
+  else                                           workerStatus = 'OK';
+
+  $('dbgWorker').textContent  = workerStatus;
+  $('dbgAudio').textContent   = AudioCtx        ? 'OK (' + (window.AudioContext ? 'standard' : 'webkit prefix') + ')' : 'NO';
+  $('dbgOffline').textContent = OfflineAudioCtx ? 'OK (' + (window.OfflineAudioContext ? 'standard' : 'webkit prefix') + ')' : 'NO';
+  $('dbgBitmap').textContent  = typeof createImageBitmap === 'function' ? 'OK (native)' : 'Fallback (<img> element)';
+  $('dbgArrBuf').textContent  = (typeof File !== 'undefined' && File.prototype.arrayBuffer) ? 'OK (native)' : 'Fallback (FileReader)';
+  $('dbgProto').textContent   = window.location.protocol;
+  $('dbgMobile').textContent  = IS_MOBILE ? (IS_IOS ? 'iOS' : 'Android') : 'No';
+  $('dbgVer').textContent     = VERSION;
+
+  // Live log
+  var el = $('debugLog');
+  if (el) el.textContent = gDebugLog.length ? gDebugLog.join('\n') : '(no events yet)';
+}
+
+function copyDebugInfo() {
+  var lines = [
+    'AudioHide Debug Report — ' + new Date().toISOString(),
+    'Version:      ' + VERSION,
+    'UA:           ' + navigator.userAgent,
+    'Protocol:     ' + window.location.protocol,
+    'Worker:       ' + $('dbgWorker').textContent,
+    'AudioContext: ' + $('dbgAudio').textContent,
+    'OfflineACtx:  ' + $('dbgOffline').textContent,
+    'ImageBitmap:  ' + $('dbgBitmap').textContent,
+    'File.arrBuf:  ' + $('dbgArrBuf').textContent,
+    'Mobile:       ' + $('dbgMobile').textContent,
+    '',
+    '--- Event log ---',
+    gDebugLog.join('\n')
+  ];
+  var text = lines.join('\n');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function () {
+      $('copyDebugBtn').textContent = 'Copied!';
+      setTimeout(function () { $('copyDebugBtn').textContent = 'Copy to clipboard'; }, 2000);
+    });
+  } else {
+    // Fallback for old browsers / iOS
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.top = '0'; ta.style.left = '0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    try { document.execCommand('copy'); $('copyDebugBtn').textContent = 'Copied!'; } catch (e) {}
+    document.body.removeChild(ta);
+    setTimeout(function () { $('copyDebugBtn').textContent = 'Copy to clipboard'; }, 2000);
+  }
+}

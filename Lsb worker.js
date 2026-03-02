@@ -1,26 +1,24 @@
 /**
  * lsb-worker.js — AudioHide LSB Web Worker
  *
- * Runs the bit-level encode/decode loops in a background thread so
- * the main UI never freezes during large images.
+ * Messages IN:
+ *   { type: 'embed',   data: ArrayBuffer, payload: ArrayBuffer,
+ *     bpc, scatterKey, totalChannels }
+ *   { type: 'extract', data: ArrayBuffer, numBytes, startBit,
+ *     bpc, scatterKey, totalChannels }
  *
- * Messages IN  (from main thread):
- *   { type: 'embed',   data, payload, bpc, scatterKey, totalChannels }
- *   { type: 'extract', data, numBytes, startBit, bpc, scatterKey, totalChannels }
+ *   data is TRANSFERRED (not cloned) — main thread must not use it after postMessage.
+ *   Worker transfers it back when done.
  *
- *   NOTE: data and payload arrive as ArrayBuffer (cloned, not transferred).
- *         The originals stay intact on the main thread.
- *
- * Messages OUT (to main thread):
+ * Messages OUT:
  *   { type: 'progress', value: 0..1 }
- *   { type: 'done',     data: ArrayBuffer }   <- embed: modified pixel buffer
- *   { type: 'done',     result: ArrayBuffer } <- extract: extracted bytes
+ *   { type: 'done',     data: ArrayBuffer }   <- embed result (transferred back)
+ *   { type: 'done',     result: ArrayBuffer } <- extract result (transferred)
  *   { type: 'error',    message: string }
  */
 
 'use strict';
 
-// Polyfill for IE11 / old Android
 if (!Math.imul) {
   Math.imul = function (a, b) {
     var ah = (a >>> 16) & 0xffff, al = a & 0xffff;
@@ -29,7 +27,6 @@ if (!Math.imul) {
   };
 }
 
-// Scatter helpers (duplicated — workers can't import from main thread)
 var SCATTER_SEG = 1024;
 
 function mulberry32(seed) {
@@ -66,7 +63,6 @@ function buildScatterMap(key, availChannels) {
   };
 }
 
-// Message handler
 self.onmessage = function (e) {
   var msg     = e.data;
   var scatter = (msg.scatterKey && msg.totalChannels)
@@ -75,12 +71,9 @@ self.onmessage = function (e) {
 
   try {
     if (msg.type === 'embed') {
-      // IMPORTANT: msg.data is an ArrayBuffer — indexing it directly gives undefined.
-      // Must wrap in Uint8ClampedArray first.
-      var pixels  = new Uint8ClampedArray(msg.data);
+      var pixels  = new Uint8ClampedArray(msg.data);   // view over transferred buffer
       var payload = new Uint8Array(msg.payload);
       embed(pixels, payload, msg.bpc || 1, scatter);
-
     } else if (msg.type === 'extract') {
       var pixels2 = new Uint8ClampedArray(msg.data);
       extract(pixels2, msg.numBytes, msg.startBit, msg.bpc || 1, scatter);
@@ -90,53 +83,83 @@ self.onmessage = function (e) {
   }
 };
 
-// LSB Embed
+// ── LSB Embed ────────────────────────────────────────────────
 function embed(pixels, payload, bpc, scatter) {
   var totalBits    = payload.length * 8;
-  var REPORT_EVERY = 500000;
+  var REPORT_EVERY = 600000;
 
-  for (var i = 0; i < totalBits; i++) {
-    var b      = (payload[i >> 3] >> (7 - (i & 7))) & 1;
-    var chIdx  = Math.floor(i / bpc);
-    var bitPos = i % bpc;
-    var ch     = scatter ? scatter(chIdx) : chIdx;
-    var pixel  = Math.floor(ch / 3);
-    var chan   = ch % 3;
-    var di     = pixel * 4 + chan;
-    var mask   = ~(1 << bitPos) & 0xFF;
-    pixels[di] = (pixels[di] & mask) | (b << bitPos);
+  // Fast path: bpc=1, no scatter — most common case.
+  // Avoids per-bit division/modulo and scatter lookup.
+  if (bpc === 1 && !scatter) {
+    for (var i = 0; i < totalBits; i++) {
+      var b  = (payload[i >> 3] >> (7 - (i & 7))) & 1;
+      // channel i → pixel floor(i/3), rgba offset i%3
+      // skip alpha (channel index maps to: 0=R,1=G,2=B of each pixel)
+      var di = (((i / 3) | 0) << 2) + (i % 3);
+      pixels[di] = (pixels[di] & 0xFE) | b;
 
-    if (i % REPORT_EVERY === 0) {
-      self.postMessage({ type: 'progress', value: i / totalBits });
+      if ((i & 0xFFFFF) === 0) {   // i % ~1M — cheap bitmask instead of modulo
+        self.postMessage({ type: 'progress', value: i / totalBits });
+      }
+    }
+    self.postMessage({ type: 'done', data: pixels.buffer }, [pixels.buffer]);
+    return;
+  }
+
+  // General path: bpc=2 or scatter enabled
+  for (var i2 = 0; i2 < totalBits; i2++) {
+    var b2      = (payload[i2 >> 3] >> (7 - (i2 & 7))) & 1;
+    var chIdx   = (i2 / bpc) | 0;
+    var bitPos  = i2 % bpc;
+    var ch      = scatter ? scatter(chIdx) : chIdx;
+    var di2     = (((ch / 3) | 0) << 2) + (ch % 3);
+    var mask    = ~(1 << bitPos) & 0xFF;
+    pixels[di2] = (pixels[di2] & mask) | (b2 << bitPos);
+
+    if (i2 % REPORT_EVERY === 0) {
+      self.postMessage({ type: 'progress', value: i2 / totalBits });
     }
   }
 
-  // Transfer modified buffer back to main thread (zero-copy)
   self.postMessage({ type: 'done', data: pixels.buffer }, [pixels.buffer]);
 }
 
-// LSB Extract
+// ── LSB Extract ──────────────────────────────────────────────
 function extract(pixels, numBytes, startBit, bpc, scatter) {
   var result       = new Uint8Array(numBytes);
   var totalBits    = numBytes * 8;
-  var REPORT_EVERY = 500000;
+  var REPORT_EVERY = 600000;
 
-  for (var i = 0; i < totalBits; i++) {
-    var absBit = startBit + i;
-    var chIdx  = Math.floor(absBit / bpc);
+  // Fast path: bpc=1, no scatter
+  if (bpc === 1 && !scatter) {
+    var abs = startBit;
+    for (var i = 0; i < totalBits; i++, abs++) {
+      var di = (((abs / 3) | 0) << 2) + (abs % 3);
+      var b  = pixels[di] & 1;
+      result[i >> 3] |= (b << (7 - (i & 7)));
+
+      if ((i & 0xFFFFF) === 0) {
+        self.postMessage({ type: 'progress', value: i / totalBits });
+      }
+    }
+    self.postMessage({ type: 'done', result: result.buffer }, [result.buffer]);
+    return;
+  }
+
+  // General path
+  for (var i2 = 0; i2 < totalBits; i2++) {
+    var absBit = startBit + i2;
+    var chIdx  = (absBit / bpc) | 0;
     var bitPos = absBit % bpc;
     var ch     = scatter ? scatter(chIdx) : chIdx;
-    var pixel  = Math.floor(ch / 3);
-    var chan   = ch % 3;
-    var di     = pixel * 4 + chan;
-    var b      = (pixels[di] >> bitPos) & 1;
-    result[i >> 3] |= (b << (7 - (i & 7)));
+    var di2    = (((ch / 3) | 0) << 2) + (ch % 3);
+    var b2     = (pixels[di2] >> bitPos) & 1;
+    result[i2 >> 3] |= (b2 << (7 - (i2 & 7)));
 
-    if (i % REPORT_EVERY === 0) {
-      self.postMessage({ type: 'progress', value: i / totalBits });
+    if (i2 % REPORT_EVERY === 0) {
+      self.postMessage({ type: 'progress', value: i2 / totalBits });
     }
   }
 
-  // Transfer result to main thread (zero-copy)
   self.postMessage({ type: 'done', result: result.buffer }, [result.buffer]);
 }
