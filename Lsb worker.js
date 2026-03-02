@@ -8,16 +8,19 @@
  *   { type: 'embed',   data, payload, bpc, scatterKey, totalChannels }
  *   { type: 'extract', data, numBytes, startBit, bpc, scatterKey, totalChannels }
  *
+ *   NOTE: data and payload arrive as ArrayBuffer (cloned, not transferred).
+ *         The originals stay intact on the main thread.
+ *
  * Messages OUT (to main thread):
  *   { type: 'progress', value: 0..1 }
- *   { type: 'done',     data }          ← embed result
- *   { type: 'done',     result }        ← extract result (Uint8Array)
- *   { type: 'error',    message }
+ *   { type: 'done',     data: ArrayBuffer }   <- embed: modified pixel buffer
+ *   { type: 'done',     result: ArrayBuffer } <- extract: extracted bytes
+ *   { type: 'error',    message: string }
  */
 
 'use strict';
 
-// ── Polyfills (same as main thread — worker has no DOM) ──────
+// Polyfill for IE11 / old Android
 if (!Math.imul) {
   Math.imul = function (a, b) {
     var ah = (a >>> 16) & 0xffff, al = a & 0xffff;
@@ -26,7 +29,7 @@ if (!Math.imul) {
   };
 }
 
-// ── Scatter helpers (duplicated from main — workers can't import) ─
+// Scatter helpers (duplicated — workers can't import from main thread)
 var SCATTER_SEG = 1024;
 
 function mulberry32(seed) {
@@ -46,21 +49,15 @@ function hashKey(str) {
   return h >>> 0;
 }
 
-/**
- * Builds a segment-shuffle scatter map from a passkey.
- * Returns a function: channelIndex → shuffledChannelIndex.
- */
 function buildScatterMap(key, availChannels) {
   var segCount = Math.ceil(availChannels / SCATTER_SEG);
   var order    = new Uint32Array(segCount);
   for (var s = 0; s < segCount; s++) order[s] = s;
-
   var rand = mulberry32(hashKey(key));
   for (var i = segCount - 1; i > 0; i--) {
     var j = Math.floor(rand() * (i + 1));
     var tmp = order[i]; order[i] = order[j]; order[j] = tmp;
   }
-
   return function (chIdx) {
     var seg = (chIdx / SCATTER_SEG) | 0;
     var off = chIdx % SCATTER_SEG;
@@ -69,37 +66,34 @@ function buildScatterMap(key, availChannels) {
   };
 }
 
-// ── Message handler ──────────────────────────────────────────
+// Message handler
 self.onmessage = function (e) {
-  var msg = e.data;
-
-  // Build scatter map from key if provided
+  var msg     = e.data;
   var scatter = (msg.scatterKey && msg.totalChannels)
     ? buildScatterMap(msg.scatterKey, msg.totalChannels)
     : null;
 
   try {
     if (msg.type === 'embed') {
-      embed(msg.data, msg.payload, msg.bpc || 1, scatter);
+      // IMPORTANT: msg.data is an ArrayBuffer — indexing it directly gives undefined.
+      // Must wrap in Uint8ClampedArray first.
+      var pixels  = new Uint8ClampedArray(msg.data);
+      var payload = new Uint8Array(msg.payload);
+      embed(pixels, payload, msg.bpc || 1, scatter);
+
     } else if (msg.type === 'extract') {
-      extract(msg.data, msg.numBytes, msg.startBit, msg.bpc || 1, scatter);
+      var pixels2 = new Uint8ClampedArray(msg.data);
+      extract(pixels2, msg.numBytes, msg.startBit, msg.bpc || 1, scatter);
     }
   } catch (err) {
-    self.postMessage({ type: 'error', message: String(err) });
+    self.postMessage({ type: 'error', message: (err && err.message) ? err.message : String(err) });
   }
 };
 
-// ── LSB Embed ────────────────────────────────────────────────
-/**
- * Writes payload bits into the image data array.
- * data    — Uint8ClampedArray of RGBA pixels (transferred, not copied)
- * payload — Uint8Array of bytes to embed
- * bpc     — bits per channel: 1 (standard) or 2 (double capacity)
- * scatter — optional channel remapping function
- */
-function embed(data, payload, bpc, scatter) {
+// LSB Embed
+function embed(pixels, payload, bpc, scatter) {
   var totalBits    = payload.length * 8;
-  var REPORT_EVERY = 500000; // report progress every N bits
+  var REPORT_EVERY = 500000;
 
   for (var i = 0; i < totalBits; i++) {
     var b      = (payload[i >> 3] >> (7 - (i & 7))) & 1;
@@ -110,26 +104,19 @@ function embed(data, payload, bpc, scatter) {
     var chan   = ch % 3;
     var di     = pixel * 4 + chan;
     var mask   = ~(1 << bitPos) & 0xFF;
-    data[di]   = (data[di] & mask) | (b << bitPos);
+    pixels[di] = (pixels[di] & mask) | (b << bitPos);
 
     if (i % REPORT_EVERY === 0) {
       self.postMessage({ type: 'progress', value: i / totalBits });
     }
   }
 
-  self.postMessage({ type: 'done', data: data });
+  // Transfer modified buffer back to main thread (zero-copy)
+  self.postMessage({ type: 'done', data: pixels.buffer }, [pixels.buffer]);
 }
 
-// ── LSB Extract ──────────────────────────────────────────────
-/**
- * Reads numBytes of payload from image data starting at startBit.
- * data     — Uint8ClampedArray of RGBA pixels
- * numBytes — how many bytes to extract
- * startBit — absolute bit-sequence offset (skip header bits)
- * bpc      — bits per channel used during encoding
- * scatter  — optional channel remapping function
- */
-function extract(data, numBytes, startBit, bpc, scatter) {
+// LSB Extract
+function extract(pixels, numBytes, startBit, bpc, scatter) {
   var result       = new Uint8Array(numBytes);
   var totalBits    = numBytes * 8;
   var REPORT_EVERY = 500000;
@@ -142,7 +129,7 @@ function extract(data, numBytes, startBit, bpc, scatter) {
     var pixel  = Math.floor(ch / 3);
     var chan   = ch % 3;
     var di     = pixel * 4 + chan;
-    var b      = (data[di] >> bitPos) & 1;
+    var b      = (pixels[di] >> bitPos) & 1;
     result[i >> 3] |= (b << (7 - (i & 7)));
 
     if (i % REPORT_EVERY === 0) {
@@ -150,5 +137,6 @@ function extract(data, numBytes, startBit, bpc, scatter) {
     }
   }
 
-  self.postMessage({ type: 'done', result: result });
+  // Transfer result to main thread (zero-copy)
+  self.postMessage({ type: 'done', result: result.buffer }, [result.buffer]);
 }

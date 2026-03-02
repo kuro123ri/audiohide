@@ -41,7 +41,7 @@
 // VERSION & CONSTANTS
 // ═══════════════════════════════════════════════════════════════
 
-var VERSION = '1.0.16';
+var VERSION = '1.1.0';
 
 /** Magic bytes at the start of every AudioHide payload. */
 var MAGIC = [0x41, 0x48, 0x49, 0x44]; // "AHID"
@@ -667,7 +667,11 @@ function buildPayload(wav, speedX1000, origDurMs, bpc, channels) {
 
 /**
  * Embed payload bits into imageData using a Web Worker.
- * The pixel array is transferred (zero-copy) to the Worker and back.
+ *
+ * We do NOT transfer data.buffer — the main thread keeps ownership so we
+ * can write the result back into the original Uint8ClampedArray when done.
+ * (Transferring would detach data, making it impossible to copy back.)
+ * payload IS transferred (we don't need it again after postMessage).
  */
 function lsbEmbedWorker(data, payload, onProg, scatterKey, bpc, totalChannels) {
   return new Promise(function (resolve, reject) {
@@ -677,30 +681,40 @@ function lsbEmbedWorker(data, payload, onProg, scatterKey, bpc, totalChannels) {
       var msg = e.data;
       if (msg.type === 'progress') {
         onProg(msg.value, Date.now());
+
       } else if (msg.type === 'done') {
-        // Copy result back — the original 'data' reference must be updated in-place
-        var result = new Uint8Array(msg.data);
+        // Worker returns the modified pixels as an ArrayBuffer.
+        // Copy every byte back into the original Uint8ClampedArray so
+        // putImageData() will pick up the changes.
+        var result = new Uint8ClampedArray(msg.data);
         for (var i = 0; i < result.length; i++) data[i] = result[i];
         worker.terminate();
         resolve();
+
       } else if (msg.type === 'error') {
         worker.terminate();
         reject(new Error(msg.message));
       }
     };
 
-    worker.onerror = function (err) { worker.terminate(); reject(err); };
+    // worker.onerror fires when the worker script itself fails to load or throws
+    // uncaught. The argument is an ErrorEvent — read .message, not String(err).
+    worker.onerror = function (ev) {
+      worker.terminate();
+      var msg = ev.message || ('Worker error at ' + ev.filename + ':' + ev.lineno);
+      reject(new Error(msg));
+    };
 
-    // We can't transfer closures — pass key + totalChannels so the Worker
-    // rebuilds the scatter map itself
+    // Clone data (no transfer) so the original stays usable on the main thread.
+    // Transfer payload — we don't need it again.
     worker.postMessage({
       type:          'embed',
-      data:          data.buffer,
+      data:          data.buffer.slice(0), // slice = clone, original stays intact
       payload:       payload.buffer,
       bpc:           bpc,
       scatterKey:    scatterKey,
       totalChannels: totalChannels
-    }, [data.buffer, payload.buffer]);
+    }, [payload.buffer]);
   });
 }
 
@@ -716,6 +730,7 @@ function lsbExtractWorker(data, numBytes, startBit, onProg, scatterKey, bpc, tot
       if (msg.type === 'progress') {
         onProg(msg.value);
       } else if (msg.type === 'done') {
+        // Worker transfers result as ArrayBuffer — wrap in Uint8Array to use it
         worker.terminate();
         resolve(new Uint8Array(msg.result));
       } else if (msg.type === 'error') {
@@ -724,17 +739,22 @@ function lsbExtractWorker(data, numBytes, startBit, onProg, scatterKey, bpc, tot
       }
     };
 
-    worker.onerror = function (err) { worker.terminate(); reject(err); };
+    worker.onerror = function (ev) {
+      worker.terminate();
+      var msg = ev.message || ('Worker error at ' + ev.filename + ':' + ev.lineno);
+      reject(new Error(msg));
+    };
 
+    // Clone data (no transfer) — we may need it again if decode fails
     worker.postMessage({
       type:          'extract',
-      data:          data.buffer,
+      data:          data.buffer.slice(0),
       numBytes:      numBytes,
       startBit:      startBit,
       bpc:           bpc,
       scatterKey:    scatterKey,
       totalChannels: totalChannels
-    }, [data.buffer]);
+    });
   });
 }
 
