@@ -40,10 +40,6 @@ try decode on this lemon
 
 ![lemons](https://github.com/kuro123ri/audiohide/blob/main/lemon.png)
 
-for people who want sent in discord i recommend sent as zip or if you has [vencord](https://vencord.dev/) then
-use plugins call "fiximage"
-
-
 ## Features
 
 - **100% local** — nothing leaves your browser

@@ -25,14 +25,21 @@
       Hide a song inside an image — runs entirely in your browser, no upload.
     </div>
   </div>
-  <!-- No gap shorthand — not supported in Safari < 14.1 -->
-  <div style="display:-webkit-flex;display:flex;-webkit-flex-direction:column;flex-direction:column;">
-    <button class="btn-theme"    id="themeBtn"    onclick="cycleTheme()"    style="margin-bottom:4px;">System</button>
-    <button class="btn-settings"                  onclick="toggleSettings()">[ Settings ]</button>
+  <div style="text-align:right;-webkit-flex-shrink:0;flex-shrink:0;">
+    <div><button class="btn-theme"     id="themeBtn"    onclick="cycleTheme()"    style="margin-bottom:4px;">System</button></div>
+    <div><button class="btn-settings"                   onclick="toggleSettings()" style="margin-bottom:4px;">[ Settings ]</button></div>
+    <div><button class="btn-devex"                      onclick="toggleDevEx()"    style="margin-bottom:4px;">[ Dev Experiment ]</button></div>
+    <div><button class="btn-whats-new" id="whatsNewBtn" onclick="openChangelog()">[ What's New ]</button></div>
   </div>
 </div>
 
 <hr>
+
+<!-- ── UPDATE ANNOUNCEMENT BANNER ─────────────────────────── -->
+<div class="update-banner" id="updateBanner" style="display:none;"></div>
+
+<!-- ── CHANGELOG MODAL ─────────────────────────────────────── -->
+<div class="cl-modal-overlay" id="changelogModal" style="display:none;"></div>
 
 <!-- ── SETTINGS PANEL ──────────────────────────────────────── -->
 <div class="settings-panel" id="settingsPanel">
@@ -82,7 +89,6 @@
     <div class="setting-desc">Boosts quiet audio to full volume before encoding.</div>
   </div>
   <div class="setting-row">
-    <!-- Toggle switch for Stereo / Mono — works on iOS, Android, desktop -->
     <label class="toggle-wrap" for="stereoAudio">
       <input type="checkbox" id="stereoAudio" onchange="analyseCapacity()"/>
       <span class="toggle-track"></span>
@@ -138,17 +144,16 @@
     <div class="setting-desc">
       When ON, the audio is split across multiple frames of an Animated PNG.
       The output plays as a looping animation in any browser and can be decoded back to audio
-      by dropping it into the Decode tab. Best for GIF carrier images — each GIF frame
-      carries its own audio chunk. Output is always .apng.png (never GIF).
+      by dropping it into the Decode tab. Best for GIF carrier images.
       Note: multi-frame uses 1-bit mono mode regardless of other settings.
     </div>
   </div>
   <div id="mfOptions" class="setting-row" style="display:none; margin-left:16px;">
-    <label>Frame delay (ms): how long each frame shows before the next</label>
+    <label>Frame delay (ms):</label>
     <input type="number" id="mfDelay" value="200" min="20" max="5000" step="10"
       style="width:80px;font-size:14px;"/>
     <div class="setting-desc" style="margin-top:4px;">
-      200ms = 5 fps (smooth enough, small file). 100ms = 10 fps. 1000ms = 1 fps (slideshow).
+      200ms = 5 fps. 100ms = 10 fps. 1000ms = 1 fps (slideshow).
       GIF input: delay is read from the GIF itself and this value is ignored.
     </div>
   </div>
@@ -161,7 +166,7 @@
       Enable scatter encoding with passkey
     </label>
     <div class="setting-desc">
-      Without a passkey, bits are written from pixel 0 in order — any LSB tool detects this instantly.
+      Without a passkey, bits are written from pixel 0 in order.
       With a passkey, bits are scattered in a key-derived random order, making detection much harder.
     </div>
   </div>
@@ -178,7 +183,7 @@
   <hr>
   <h3>Debug</h3>
   <div class="setting-row">
-    <div class="setting-desc">Shows browser compatibility info and a live event log. Share this when reporting a bug.</div>
+    <div class="setting-desc">Shows browser compatibility info and a live event log.</div>
     <button class="btn-settings" onclick="toggleDebug()" style="margin-top:6px;">Show / Hide debug info</button>
   </div>
 
@@ -206,6 +211,244 @@
   <button class="btn-settings" onclick="toggleSettings()">Close settings</button>
 </div>
 
+<!-- ── DEVELOPER EXPERIMENT PANEL ──────────────────────────── -->
+<div class="devex-panel" id="devexPanel">
+
+  <div class="devex-header-row">
+    <h2 class="devex-title">⚗ Developer Experiment</h2>
+    <button class="btn-devex-close" onclick="toggleDevEx()">✕ Close</button>
+  </div>
+
+  <div class="devex-warning">
+    <b>⚠ Experimental features only.</b>
+    These are not part of the stable AudioHide release.<br>
+    <span class="tag-alpha">α ALPHA</span> = unstable, may break normal encode/decode.&nbsp;
+    <span class="tag-beta">β BETA</span> = mostly works, not fully tested.<br>
+    Disable all toggles here to return to normal behaviour.
+  </div>
+
+  <!-- ══ ALPHA SECTION ══════════════════════════════════════ -->
+  <div class="devex-section devex-section-alpha">
+    <div class="devex-section-label"><span class="tag-alpha">α ALPHA</span> Unstable — may break things</div>
+
+    <!-- Payload compression -->
+    <div class="devex-feature-row">
+      <div class="devex-feature-top">
+        <label class="toggle-wrap" for="expCompression">
+          <input type="checkbox" id="expCompression" onchange="onDevExChange()"/>
+          <span class="toggle-track"></span>
+          <span class="toggle-label">Payload compression (deflate)
+            <small>Compress audio bytes before embedding — smaller payload = less pitch change needed</small>
+          </span>
+        </label>
+        <span class="tag-alpha">α</span>
+      </div>
+      <div class="devex-desc">Runs raw deflate on the WAV before LSB embedding. On decode, automatically decompresses. May fail on older browsers without DecompressionStream. Does not affect existing uncompressed images.</div>
+    </div>
+
+    <!-- MP3/Opus output -->
+    <div class="devex-feature-row">
+      <div class="devex-feature-top">
+        <label style="font-weight:bold;font-size:12px;">Audio output format
+          <small style="display:block;font-weight:normal;color:#555;margin-top:1px;">Choose what gets embedded — WAV is safest, MP3/Opus are smaller</small>
+        </label>
+        <span class="tag-alpha">α</span>
+      </div>
+      <select id="expAudioFormat" onchange="onDevExChange()" style="margin-top:6px;">
+        <option value="wav" selected>WAV — lossless, large (default)</option>
+        <option value="mp3">MP3 — ~5× smaller, lossy (alpha)</option>
+        <option value="opus">Opus — ~8× smaller, lossy (alpha)</option>
+      </select>
+      <div class="devex-desc">MP3/Opus require browser encoding support (Chrome 94+ for Opus). Decoded audio plays directly in browser. WAV is always safe — use MP3/Opus only if you need to fit more audio at 1.0× speed.</div>
+    </div>
+
+    <!-- Social media survival -->
+    <div class="devex-feature-row">
+      <div class="devex-feature-top">
+        <label class="toggle-wrap" for="expSocialSurvival">
+          <input type="checkbox" id="expSocialSurvival" onchange="onDevExChange()"/>
+          <span class="toggle-track"></span>
+          <span class="toggle-label">Social media survival mode
+            <small>Add error-correction so hidden data survives JPEG recompression</small>
+          </span>
+        </label>
+        <span class="tag-alpha">α</span>
+      </div>
+      <div class="devex-desc">Embeds each byte multiple times with a Reed-Solomon style redundancy scheme. Increases payload size by ~3×. Designed to survive Twitter/Discord/Telegram auto-JPEG. Decode automatically reconstructs from redundant copies. Still experimental — success rate varies by platform compression settings.</div>
+    </div>
+
+    <!-- Hide anything -->
+    <div class="devex-feature-row">
+      <div class="devex-feature-top">
+        <label class="toggle-wrap" for="expHideAnything">
+          <input type="checkbox" id="expHideAnything" onchange="onHideAnythingToggle()"/>
+          <span class="toggle-track"></span>
+          <span class="toggle-label">Hide anything (generic file payload)
+            <small>Replace audio drop zone with a generic file drop — hide any file type</small>
+          </span>
+        </label>
+        <span class="tag-alpha">α</span>
+      </div>
+      <div class="devex-desc">Embeds any file (ZIP, PDF, TXT, images, code, etc.) directly into the carrier PNG. No audio processing — raw bytes only. Decode extracts and downloads with original filename and extension. Audio mode is disabled while this is on. Capacity = raw pixel capacity minus 32-byte header.</div>
+    </div>
+
+    <!-- Image IS the spectrogram -->
+    <div class="devex-feature-row">
+      <div class="devex-feature-top">
+        <label class="toggle-wrap" for="expSpectrogram">
+          <input type="checkbox" id="expSpectrogram" onchange="onDevExChange()"/>
+          <span class="toggle-track"></span>
+          <span class="toggle-label">Image IS the spectrogram
+            <small>Generate a carrier image that visually shows the spectrogram of the hidden audio</small>
+          </span>
+        </label>
+        <span class="tag-alpha">α</span>
+      </div>
+      <div class="devex-desc">Renders a mel-spectrogram of your audio as the carrier image itself, then embeds the audio into its own spectrogram. The image is secretly "showing" you what it contains. Overrides the carrier image drop zone — no separate image needed. Output PNG is both the spectrogram art and the steg container.</div>
+    </div>
+
+  </div><!-- /alpha section -->
+
+  <!-- ══ BETA SECTION ═══════════════════════════════════════ -->
+  <div class="devex-section devex-section-beta">
+    <div class="devex-section-label"><span class="tag-beta">β BETA</span> Mostly works — not fully tested</div>
+
+    <!-- ── Format Support ── -->
+    <div class="devex-subsection-title">Format Support</div>
+
+    <div class="devex-feature-row">
+      <div class="devex-feature-top">
+        <b style="font-size:12px;">Carrier input formats (encode side)</b>
+        <span class="tag-beta">β</span>
+      </div>
+      <div class="devex-desc" style="margin-bottom:8px;">Enable additional image formats as carrier inputs. PNG/BMP/GIF always supported regardless of these settings.</div>
+
+      <div class="devex-format-grid">
+        <label class="devex-format-item">
+          <input type="checkbox" id="fmtWebP" onchange="onDevExChange()"/>
+          <span class="devex-format-name">WebP <span class="tag-beta">β</span></span>
+          <span class="devex-format-desc">Lossless WebP — common format, good capacity</span>
+        </label>
+        <label class="devex-format-item">
+          <input type="checkbox" id="fmtTIFF" onchange="onDevExChange()"/>
+          <span class="devex-format-name">TIFF <span class="tag-beta">β</span></span>
+          <span class="devex-format-desc">Tagged Image File — lossless, large files</span>
+        </label>
+        <label class="devex-format-item">
+          <input type="checkbox" id="fmtTGA" onchange="onDevExChange()"/>
+          <span class="devex-format-name">TGA <span class="tag-beta">β</span></span>
+          <span class="devex-format-desc">Targa — uncompressed, needs custom parser</span>
+        </label>
+        <label class="devex-format-item">
+          <input type="checkbox" id="fmtQOI" onchange="onDevExChange()"/>
+          <span class="devex-format-name">QOI <span class="tag-beta">β</span></span>
+          <span class="devex-format-desc">Quite OK Image — modern lossless, fast</span>
+        </label>
+        <label class="devex-format-item">
+          <input type="checkbox" id="fmtAnimWebP" onchange="onDevExChange()"/>
+          <span class="devex-format-name">Animated WebP <span class="tag-alpha">α</span></span>
+          <span class="devex-format-desc">Multi-frame WebP carrier — browser support varies</span>
+        </label>
+        <label class="devex-format-item">
+          <input type="checkbox" id="fmtAnimAVIF" onchange="onDevExChange()"/>
+          <span class="devex-format-name">Animated AVIF <span class="tag-alpha">α</span></span>
+          <span class="devex-format-desc">Multi-frame AVIF — very limited browser support</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="devex-feature-row">
+      <div class="devex-feature-top">
+        <b style="font-size:12px;">Output format (what gets saved)</b>
+        <span class="tag-beta">β</span>
+      </div>
+      <div class="devex-desc" style="margin-bottom:8px;">Default output is always PNG. Optionally save in a different lossless format.</div>
+
+      <div class="devex-format-grid">
+        <label class="devex-format-item">
+          <input type="radio" name="outputFormat" id="outPNG" value="png" checked onchange="onDevExChange()"/>
+          <span class="devex-format-name">PNG <span class="devex-default-tag">default</span></span>
+          <span class="devex-format-desc">Always safe — recommended</span>
+        </label>
+        <label class="devex-format-item">
+          <input type="radio" name="outputFormat" id="outWebP" value="webp" onchange="onDevExChange()"/>
+          <span class="devex-format-name">WebP lossless <span class="tag-beta">β</span></span>
+          <span class="devex-format-desc">Smaller than PNG, same quality</span>
+        </label>
+        <label class="devex-format-item">
+          <input type="radio" name="outputFormat" id="outTIFF" value="tiff" onchange="onDevExChange()"/>
+          <span class="devex-format-name">TIFF <span class="tag-beta">β</span></span>
+          <span class="devex-format-desc">Large but universally compatible</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="devex-feature-row">
+      <div class="devex-feature-top">
+        <b style="font-size:12px;">Decode input — additional formats</b>
+        <span class="tag-beta">β</span>
+      </div>
+      <div class="devex-desc" style="margin-bottom:8px;">Auto-detect and accept additional formats on the decode side. Formats marked α may not work in all browsers.</div>
+
+      <div class="devex-format-grid">
+        <label class="devex-format-item">
+          <input type="checkbox" id="decAutoDetect" onchange="onDevExChange()" checked/>
+          <span class="devex-format-name">Auto-detect any format <span class="tag-beta">β</span></span>
+          <span class="devex-format-desc">Sniff format from file header, accept any enabled format</span>
+        </label>
+        <label class="devex-format-item">
+          <input type="checkbox" id="decAVIF" onchange="onDevExChange()"/>
+          <span class="devex-format-name">AVIF <span class="tag-alpha">α</span></span>
+          <span class="devex-format-desc">Browser support inconsistent — may fail on Firefox/Safari</span>
+        </label>
+        <label class="devex-format-item">
+          <input type="checkbox" id="decHEIC" onchange="onDevExChange()"/>
+          <span class="devex-format-name">HEIF / HEIC <span class="tag-alpha">α</span></span>
+          <span class="devex-format-desc">Safari only — will fail on Chrome and Firefox</span>
+        </label>
+        <label class="devex-format-item">
+          <input type="checkbox" id="decICO" onchange="onDevExChange()"/>
+          <span class="devex-format-name">ICO <span class="tag-alpha">α</span></span>
+          <span class="devex-format-desc">Very limited size — mostly broken for large payloads</span>
+        </label>
+        <label class="devex-format-item">
+          <input type="checkbox" id="decJXL" onchange="onDevExChange()"/>
+          <span class="devex-format-name">JPEG XL <span class="tag-alpha">α</span></span>
+          <span class="devex-format-desc">Near-zero browser support currently — expect failures</span>
+        </label>
+        <label class="devex-format-item">
+          <input type="checkbox" id="decPCX" onchange="onDevExChange()"/>
+          <span class="devex-format-name">PCX <span class="tag-alpha">α</span></span>
+          <span class="devex-format-desc">Ancient format — needs custom parser, no native decode</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- ── Capacity / Quality ── -->
+    <div class="devex-subsection-title">Capacity / Quality</div>
+
+    <div class="devex-feature-row">
+      <div class="devex-feature-top">
+        <label class="toggle-wrap" for="expChannelWeight">
+          <input type="checkbox" id="expChannelWeight" onchange="onDevExChange()"/>
+          <span class="toggle-track"></span>
+          <span class="toggle-label">Per-channel LSB weighting
+            <small>Blue channel gets more bits — least perceptually sensitive</small>
+          </span>
+        </label>
+        <span class="tag-beta">β</span>
+      </div>
+      <div class="devex-desc">Distributes bits unevenly across R/G/B channels: Blue receives the most bits (least visible to the human eye), Green moderate, Red fewest. Slightly increases effective capacity without visible quality change. Decode automatically detects and reverses the weighting.</div>
+    </div>
+
+  </div><!-- /beta section -->
+
+  <div style="margin-top:14px;">
+    <button class="btn-devex-reset" onclick="resetDevEx()">Reset all to defaults</button>
+  </div>
+
+</div><!-- /devexPanel -->
+
 <!-- ── HOW TO USE ───────────────────────────────────────────── -->
 <div class="howto">
   <b>How to use:</b>
@@ -213,7 +456,7 @@
     <li><b>Encode:</b> Select a PNG image and a song, then click "Encode and Download".</li>
     <li><b>Decode:</b> Drop an encoded PNG — it auto-detects and switches to the Decode tab.</li>
     <li>If the image is too small, audio is sped up to fit. Decode reverses this automatically.</li>
-    <li>Always keep the output as PNG — re-saving as JPEG destroys the hidden data. GIF input uses first frame only.</li>
+    <li>Always keep the output as PNG — re-saving as JPEG destroys the hidden data.</li>
   </ol>
 </div>
 
@@ -227,6 +470,12 @@
      ENCODE PANEL
      ═══════════════════════════════════════════════════════════ -->
 <div class="panel active" id="panel-enc">
+
+  <!-- Hide-anything mode banner (shown by JS when expHideAnything is on) -->
+  <div class="devex-active-banner" id="hideAnythingBanner" style="display:none;">
+    <span class="tag-alpha">α</span> <b>Hide Anything mode active</b> — drop any file below to embed it.
+    Audio options are disabled. <a href="#" onclick="document.getElementById('expHideAnything').click();return false;">Disable</a>
+  </div>
 
   <div class="section">
     <h3>Step 1 — Image file (PNG or BMP only)</h3>
@@ -276,15 +525,32 @@
     </div>
   </div>
 
-  <div class="section">
-    <h3>Step 2 — Song file (MP3, WAV, FLAC, etc.)</h3>
-    <div class="dz" id="audDrop">
-      Tap or click to select an audio file, or drag and drop
-      <div class="dz-file" id="audFileLbl"></div>
-      <div class="dz-hint">Any format your browser can play</div>
-      <input type="file" id="audInput" accept="audio/*" style="font-size:16px;"/>
+  <!-- Audio drop zone (hidden when Hide Anything is on) -->
+  <div id="audioSection">
+    <div class="section">
+      <h3>Step 2 — Song file (MP3, WAV, FLAC, etc.)</h3>
+      <div class="dz" id="audDrop">
+        Tap or click to select an audio file, or drag and drop
+        <div class="dz-file" id="audFileLbl"></div>
+        <div class="dz-hint">Any format your browser can play</div>
+        <input type="file" id="audInput" accept="audio/*" style="font-size:16px;"/>
+      </div>
+      <div class="badge" id="badge"></div>
     </div>
-    <div class="badge" id="badge"></div>
+  </div>
+
+  <!-- Generic file drop zone (shown when Hide Anything is on) -->
+  <div id="fileSection" style="display:none;">
+    <div class="section">
+      <h3>Step 2 — Any file to hide</h3>
+      <div class="dz" id="fileDrop">
+        Tap or click to select any file, or drag and drop
+        <div class="dz-file" id="fileFileLbl"></div>
+        <div class="dz-hint">ZIP, PDF, TXT, images, code — anything</div>
+        <input type="file" id="fileInput" style="font-size:16px;"/>
+      </div>
+      <div class="badge" id="fileBadge"></div>
+    </div>
   </div>
 
   <!-- Progress bar + cancel -->
@@ -294,9 +560,7 @@
       <span style="display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;">
         <span id="encPct">0%</span>
         &nbsp;
-        <button class="btn-cancel" id="cancelEncBtn" onclick="cancelEncode()" style="display:none;">
-          Cancel
-        </button>
+        <button class="btn-cancel" id="cancelEncBtn" onclick="cancelEncode()" style="display:none;">Cancel</button>
       </span>
     </div>
     <div class="prog-track"><div class="prog-fill" id="encFill"></div></div>
@@ -325,7 +589,6 @@
     </div>
     <img id="decPrev" class="preview" alt="Encoded image preview"/>
 
-    <!-- Passkey row (shown by JS when passkey mode is on) -->
     <div id="decPasskeyRow" style="display:none;margin-top:10px;font-size:12px;">
       <label style="font-weight:bold;display:block;margin-bottom:4px;">
         Passkey: (required if image was encoded with one)
@@ -338,36 +601,38 @@
       <div style="font-size:11px;color:#555;margin-top:4px;">Leave blank if no passkey was used.</div>
     </div>
 
-    <!-- Info card (shown after extraction) -->
     <div class="info-card" id="infoCard">
-      <h3 style="margin-bottom:8px;">Extracted audio information</h3>
+      <h3 style="margin-bottom:8px;">Extracted payload information</h3>
       <div class="info-grid">
-        <div><div class="i-lbl">Audio size</div><div class="i-val"    id="iSize">--</div></div>
+        <div><div class="i-lbl">Payload size</div><div class="i-val"    id="iSize">--</div></div>
         <div><div class="i-lbl">Speed applied</div><div class="i-val hl" id="iSpeed">--</div></div>
         <div><div class="i-lbl">Original duration</div><div class="i-val ok" id="iOrig">--</div></div>
         <div><div class="i-lbl">Encoded duration</div><div class="i-val"    id="iEnc">--</div></div>
         <div><div class="i-lbl">LSB mode</div><div class="i-val"    id="iBpc">--</div></div>
+        <div><div class="i-lbl">Payload type</div><div class="i-val"    id="iType">audio</div></div>
       </div>
       <div class="info-note" id="iNote"></div>
     </div>
 
-    <!-- Audio player -->
     <div class="audio-wrap" id="audioWrap">
       <audio id="audioOut" controls preload="none"></audio>
       <button class="btn-sm" onclick="dlAudio()">Download audio (.wav)</button>
     </div>
+
+    <!-- Generic file download (shown when decoded payload is not audio) -->
+    <div class="file-wrap" id="fileWrap" style="display:none;">
+      <button class="btn-sm" id="dlFileBtn" onclick="dlFile()">Download extracted file</button>
+      <span class="file-wrap-name" id="dlFileName"></span>
+    </div>
   </div>
 
-  <!-- Progress bar + cancel -->
   <div class="prog-wrap" id="decProg">
     <div class="prog-lbl-row">
       <span id="decLbl">Decoding…</span>
       <span style="display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;">
         <span id="decPct">0%</span>
         &nbsp;
-        <button class="btn-cancel" id="cancelDecBtn" onclick="cancelDecode()" style="display:none;">
-          Cancel
-        </button>
+        <button class="btn-cancel" id="cancelDecBtn" onclick="cancelDecode()" style="display:none;">Cancel</button>
       </span>
     </div>
     <div class="prog-track"><div class="prog-fill" id="decFill"></div></div>
@@ -375,7 +640,7 @@
 
   <div class="status" id="decStatus"></div>
   <button class="btn btn-action" id="decBtn" onclick="doDecode()" disabled>
-    Extract Audio
+    Extract Payload
   </button>
 
 </div>
@@ -390,5 +655,7 @@
 
 <script src="apng.js"></script>
 <script src="audiohide.js"></script>
+<script src="audiohide-devex.js"></script>
+<script src="changelog.js"></script>
 </body>
 </html>

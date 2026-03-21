@@ -42,7 +42,7 @@
 // VERSION & CONSTANTS
 // ═══════════════════════════════════════════════════════════════
 
-var VERSION = '1.0.30';
+var VERSION = '1.0.31';
 
 /** Magic bytes at the start of every AudioHide payload. */
 var MAGIC = [0x41, 0x48, 0x49, 0x44]; // "AHID"
@@ -122,6 +122,7 @@ var gLastBlobSize  = 0;
 var gOrigW         = null;
 var gOrigH         = null;
 var gAspectLock    = true;
+var _resizeLock    = false;
 var gCancelEnc     = false;
 var gCancelDec     = false;
 
@@ -1877,21 +1878,26 @@ function updateResizeHint() {
 
 function applyScale(pct) {
   if (!gOrigW || !gOrigH) return;
+  _resizeLock = true;
   $('rScale').value = pct;
   $('rW').value = Math.max(1, Math.round(gOrigW * pct / 100));
   $('rH').value = Math.max(1, Math.round(gOrigH * pct / 100));
+  _resizeLock = false;
   updateResizeHint(); analyseCapacity();
 }
 
 function onResizeScale() {
   var pct = parseFloat($('rScale').value);
   if (!pct || !gOrigW || !gOrigH) return;
+  _resizeLock = true;
   $('rW').value = Math.max(1, Math.round(gOrigW * pct / 100));
   $('rH').value = Math.max(1, Math.round(gOrigH * pct / 100));
+  _resizeLock = false;
   updateResizeHint(); analyseCapacity();
 }
 
 function onResizeW() {
+  if (_resizeLock) return;
   var w = parseInt($('rW').value, 10);
   if (!w || !gOrigW || !gOrigH) return;
   if (gAspectLock) $('rH').value = Math.max(1, Math.round(w * gOrigH / gOrigW));
@@ -1899,6 +1905,7 @@ function onResizeW() {
 }
 
 function onResizeH() {
+  if (_resizeLock) return;
   var h = parseInt($('rH').value, 10);
   if (!h || !gOrigW || !gOrigH) return;
   if (gAspectLock) $('rW').value = Math.max(1, Math.round(h * gOrigW / gOrigH));
@@ -1955,8 +1962,10 @@ setupDrop('imgDrop', 'imgInput', function (f) {
     var img = new Image();
     img.onload = function () {
       gOrigW = img.width; gOrigH = img.height;
+      _resizeLock = true;
       $('rW').value               = gOrigW;
       $('rH').value               = gOrigH;
+      _resizeLock = false;
       $('rScale').value           = 100;
       $('origDims').textContent   = gOrigW + ' × ' + gOrigH + ' px'
         + (f.type === 'image/gif' ? ' (GIF — first frame only for single PNG, all frames for APNG mode)' : '');
