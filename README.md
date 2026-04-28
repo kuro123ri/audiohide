@@ -66,4 +66,4 @@ try decode on this lemon
 
 ## License
 
-Public domain — [Unlicense](LICENSE)
+Public domain — [MIT License](LICENSE)
